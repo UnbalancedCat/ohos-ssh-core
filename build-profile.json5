@@ -1,0 +1,61 @@
+{
+  "app": {
+    "signingConfigs": [
+      {
+        "name": "default",
+        "type": "HarmonyOS",
+        "material": {
+          "certpath": "C:\\Users\\Unbal\\.ohos\\config\\default_ssh_core_v3uncoIriUHwrZxXmmiesrEbbHVyZgSzwXH4BCukrHk=.cer",
+          "keyAlias": "debugKey",
+          "keyPassword": "0000001BB2575165AECEFC85970B97A26F06B4F49011840CD8CC63C1C33640FA4525ECFC86091186B90B28",
+          "profile": "C:\\Users\\Unbal\\.ohos\\config\\default_ssh_core_v3uncoIriUHwrZxXmmiesrEbbHVyZgSzwXH4BCukrHk=.p7b",
+          "signAlg": "SHA256withECDSA",
+          "storeFile": "C:\\Users\\Unbal\\.ohos\\config\\default_ssh_core_v3uncoIriUHwrZxXmmiesrEbbHVyZgSzwXH4BCukrHk=.p12",
+          "storePassword": "0000001BC36B404983272AF9723C951833291D84970684F7C2044D5F0829DAE31F3A767A93B4810A1C0627"
+        }
+      }
+    ],
+    "products": [
+      {
+        "name": "default",
+        "signingConfig": "default",
+        "targetSdkVersion": "6.1.0(23)",
+        "compatibleSdkVersion": "6.0.0(20)",
+        "runtimeOS": "HarmonyOS",
+        "buildOption": {
+          "nativeCompiler": "BiSheng",
+          "strictMode": {
+            "caseSensitiveCheck": true,
+            "useNormalizedOHMUrl": true
+          }
+        }
+      }
+    ],
+    "buildModeSet": [
+      {
+        "name": "debug",
+      },
+      {
+        "name": "release"
+      }
+    ]
+  },
+  "modules": [
+    {
+      "name": "entry",
+      "srcPath": "./entry",
+      "targets": [
+        {
+          "name": "default",
+          "applyToProducts": [
+            "default"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "ssh_lib",
+      "srcPath": "./ssh_lib",
+    }
+  ]
+}

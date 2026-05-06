@@ -1,0 +1,6 @@
+{
+  "name": "libssh_core.so",
+  "types": "./Index.d.ts",
+  "version": "1.0.0",
+  "description": "SSH core native module type declarations."
+}
