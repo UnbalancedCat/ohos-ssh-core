@@ -1,58 +1,9 @@
 import ssh from 'libssh_core.so';
 import type { SshHandle } from 'libssh_core.so';
 import { EventEmitter } from './EventEmitter';
-
-export enum SshState {
-  DISCONNECTED = 'DISCONNECTED',
-  CONNECTING = 'CONNECTING',
-  CONNECTED = 'CONNECTED',
-  ERROR = 'ERROR'
-}
-
-export interface SftpFileInfo {
-  name: string;
-  size: number;
-  permissions: number;
-  mtime: number;
-  isDir: boolean;
-}
-
-export enum SftpOpenFlags {
-  READ = 0x00000001,
-  WRITE = 0x00000002,
-  APPEND = 0x00000004,
-  CREAT = 0x00000008,
-  TRUNC = 0x00000010,
-  EXCL = 0x00000020
-}
-
-// ===== Stage 5: Structured Error Classification =====
-
-export enum SshErrorCode {
-  UNKNOWN = 'UNKNOWN',
-  NETWORK_ERROR = 'NETWORK_ERROR',
-  AUTH_FAILED = 'AUTH_FAILED',
-  HANDSHAKE_FAILED = 'HANDSHAKE_FAILED',
-  CHANNEL_ERROR = 'CHANNEL_ERROR',
-  SFTP_ERROR = 'SFTP_ERROR',
-  TIMEOUT = 'TIMEOUT',
-  DISPOSED = 'DISPOSED',
-}
-
-export class SshError extends Error {
-  code: SshErrorCode;
-  constructor(message: string, code: SshErrorCode) {
-    super(message);
-    this.code = code;
-  }
-}
-
-export interface SshConnectOptions {
-  /** TCP + handshake timeout in seconds (default: 10) */
-  timeoutSec?: number;
-  /** Keepalive interval in seconds (default: 30, set 0 to disable) */
-  keepaliveInterval?: number;
-}
+import { SshState, SshConnectOptions } from '../models/SshTypes';
+import { SftpFileInfo, SftpOpenFlags } from '../models/SftpTypes';
+import { SshErrorCode, SshError } from '../models/SshError';
 
 /**
  * High-level ArkTS Object-Oriented wrapper for the native SSH core library.
@@ -136,7 +87,7 @@ export class SshClient extends EventEmitter {
   /**
    * Get the SHA-256 fingerprint of the remote server's host key.
    * Must be called after a successful connect/connectWithKey.
-   * Returns a 64-character lowercase hex string.
+   * Returns a Base64 string.
    */
   getHostKeyFingerprint(): string {
     if (!this.handle) throw new SshError('Client is disposed', SshErrorCode.DISPOSED);

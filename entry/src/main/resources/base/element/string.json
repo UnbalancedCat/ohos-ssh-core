@@ -11,6 +11,130 @@
     {
       "name": "EntryAbility_label",
       "value": "ssh_core"
+    },
+    {
+      "name": "app_title",
+      "value": "SSH Core Test"
+    },
+    {
+      "name": "section_connection",
+      "value": "Connect Setup"
+    },
+    {
+      "name": "section_shell",
+      "value": "Shell / Exec"
+    },
+    {
+      "name": "section_sftp",
+      "value": "SFTP"
+    },
+    {
+      "name": "label_host",
+      "value": "Host"
+    },
+    {
+      "name": "label_user",
+      "value": "User"
+    },
+    {
+      "name": "label_pass",
+      "value": "Pass"
+    },
+    {
+      "name": "label_key",
+      "value": "Key"
+    },
+    {
+      "name": "label_passphrase",
+      "value": "Phrase"
+    },
+    {
+      "name": "placeholder_key",
+      "value": "-----BEGIN PRIVATE KEY-----"
+    },
+    {
+      "name": "placeholder_passphrase",
+      "value": "Key passphrase (optional)"
+    },
+    {
+      "name": "placeholder_shell_input",
+      "value": "Type command"
+    },
+    {
+      "name": "placeholder_sftp_navigate",
+      "value": "subdir or .. or /abs/path"
+    },
+    {
+      "name": "btn_connect_pass",
+      "value": "Password"
+    },
+    {
+      "name": "btn_connect_key",
+      "value": "Key"
+    },
+    {
+      "name": "btn_disconnect",
+      "value": "Disconnect"
+    },
+    {
+      "name": "btn_exec_uname",
+      "value": "uname -a"
+    },
+    {
+      "name": "btn_exec_ls",
+      "value": "ls /"
+    },
+    {
+      "name": "btn_start_shell",
+      "value": "Start Shell"
+    },
+    {
+      "name": "btn_send",
+      "value": "Send"
+    },
+    {
+      "name": "btn_sftp_init",
+      "value": "Init"
+    },
+    {
+      "name": "btn_sftp_shutdown",
+      "value": "Shutdown"
+    },
+    {
+      "name": "btn_sftp_list",
+      "value": "List Dir"
+    },
+    {
+      "name": "btn_sftp_go",
+      "value": "Go"
+    },
+    {
+      "name": "btn_sftp_read",
+      "value": "Read hostname"
+    },
+    {
+      "name": "btn_sftp_binary",
+      "value": "Binary /bin/ls"
+    },
+    {
+      "name": "btn_clear_log",
+      "value": "Clear Log"
+    },
+    {
+      "name": "log_title",
+      "value": "— Log —"
+    },
+    {
+      "name": "btn_stop_shell",
+      "value": "Stop Shell"
+    },
+    {
+      "name": "tab_shell",
+      "value": "Shell"
+    },
+    {
+      "name": "tab_sftp",
+      "value": "SFTP"
     }
   ]
 }

@@ -1,5 +1,4 @@
-export type EventPayload = string | Error | undefined;
-export type EventCallback = (payload?: EventPayload) => void;
+import { EventPayload, EventCallback } from '../models/EventTypes';
 
 /**
  * A basic EventEmitter class for ArkTS.
@@ -46,13 +45,9 @@ export class EventEmitter {
   }
 
   /**
-   * Remove all listeners.
+   * Remove all listeners (useful for cleanup).
    */
-  protected removeAllListeners(event?: string): void {
-    if (event) {
-      this.listeners.delete(event);
-    } else {
-      this.listeners.clear();
-    }
+  protected removeAllListeners(): void {
+    this.listeners.clear();
   }
 }

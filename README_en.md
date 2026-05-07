@@ -45,14 +45,17 @@ To provide optimal compatibility and size control on HarmonyOS, this project int
 
 ## Runnable Demonstration (Demo)
 
-The `entry` module includes a complete testing UI that objectively showcases all core functionalities of `ssh_lib`. It can be run directly on the HarmonyOS emulator or a physical device.
+The `entry` module includes a complete testing UI with a state-driven collapsible layout optimized for mobile screens. It can be run directly on the HarmonyOS emulator or a physical device.
 
 - **Entry File**: [`entry/src/main/ets/pages/Index.ets`](./entry/src/main/ets/pages/Index.ets)
+- **UI Features**:
+  - Connection form auto-collapses after a successful connection; the log area fills the remaining space.
+  - Bottom tab bar switches between Shell / SFTP modes (mutually exclusive), with controls expanding per mode.
+  - Adapts to system dark/light mode; all colors and dimensions are centralized in `resources`.
 - **Demo Features**:
-  - Connect by inputting target IP, port, username, and credentials.
-  - **Exec Mode**: Execute a single non-interactive command (e.g., `ls /`) and print the output.
-  - **Shell Mode**: Start a PTY and allow users to send real-time terminal commands to the server via an input box.
-  - **SFTP Tests**: One-click tests for listing directories (`sftpListDir`), reading system text files (`/etc/hostname`), and streaming binary reads of system commands (e.g., `/bin/ls`) with ELF magic byte verification.
+  - Password and private key authentication, with Host Key SHA-256 fingerprint display.
+  - **Shell**: Single command execution / interactive PTY session / Stop Shell.
+  - **SFTP**: Path navigation, directory listing, text file reading, binary streaming with ELF magic byte verification.
 
 ## How to Integrate
 

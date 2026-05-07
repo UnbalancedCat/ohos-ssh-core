@@ -111,6 +111,11 @@ target_compile_options(ssh2 PRIVATE -w)
 add_library(ssh_core SHARED
     napi_init.cpp
     ssh_napi.cpp
+    ssh_napi_connect.cpp
+    ssh_napi_exec.cpp
+    ssh_napi_shell.cpp
+    ssh_napi_sftp.cpp
+    ssh_napi_sftp_binary.cpp
 )
 
 target_include_directories(ssh_core PRIVATE

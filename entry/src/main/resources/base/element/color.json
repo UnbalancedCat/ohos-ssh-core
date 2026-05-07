@@ -3,6 +3,90 @@
     {
       "name": "start_window_background",
       "value": "#FFFFFF"
+    },
+    {
+      "name": "log_bg",
+      "value": "#EDEDED"
+    },
+    {
+      "name": "log_text_normal",
+      "value": "#333333"
+    },
+    {
+      "name": "log_text_error",
+      "value": "#C62828"
+    },
+    {
+      "name": "log_text_success",
+      "value": "#2E7D32"
+    },
+    {
+      "name": "log_text_shell",
+      "value": "#757575"
+    },
+    {
+      "name": "log_text_fingerprint",
+      "value": "#6D4C41"
+    },
+    {
+      "name": "log_title",
+      "value": "#888888"
+    },
+    {
+      "name": "section_header_bg",
+      "value": "#F0F0F0"
+    },
+    {
+      "name": "section_header_text",
+      "value": "#333333"
+    },
+    {
+      "name": "section_arrow",
+      "value": "#666666"
+    },
+    {
+      "name": "btn_disconnect_bg",
+      "value": "#D32F2F"
+    },
+    {
+      "name": "btn_disconnect_text",
+      "value": "#FFFFFF"
+    },
+    {
+      "name": "sftp_path_text",
+      "value": "#1565C0"
+    },
+    {
+      "name": "page_bg",
+      "value": "#FAFAFA"
+    },
+    {
+      "name": "title_text",
+      "value": "#212121"
+    },
+    {
+      "name": "label_text",
+      "value": "#555555"
+    },
+    {
+      "name": "tab_active_bg",
+      "value": "#2FC015"
+    },
+    {
+      "name": "tab_active_text",
+      "value": "#FFFFFF"
+    },
+    {
+      "name": "tab_inactive_bg",
+      "value": "#E0E0E0"
+    },
+    {
+      "name": "tab_inactive_text",
+      "value": "#666666"
+    },
+    {
+      "name": "bottom_bar_bg",
+      "value": "#F5F5F5"
     }
   ]
 }

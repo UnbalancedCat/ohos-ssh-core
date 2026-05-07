@@ -3,6 +3,122 @@
     {
       "name": "page_text_font_size",
       "value": "50fp"
+    },
+    {
+      "name": "title_font_size",
+      "value": "18fp"
+    },
+    {
+      "name": "section_header_font_size",
+      "value": "14fp"
+    },
+    {
+      "name": "label_font_size",
+      "value": "12fp"
+    },
+    {
+      "name": "btn_font_size",
+      "value": "11fp"
+    },
+    {
+      "name": "btn_height",
+      "value": "30vp"
+    },
+    {
+      "name": "input_height",
+      "value": "32vp"
+    },
+    {
+      "name": "input_key_height",
+      "value": "32vp"
+    },
+    {
+      "name": "input_font_size",
+      "value": "12fp"
+    },
+    {
+      "name": "log_font_size",
+      "value": "11fp"
+    },
+    {
+      "name": "log_title_font_size",
+      "value": "12fp"
+    },
+    {
+      "name": "log_border_radius",
+      "value": "8vp"
+    },
+    {
+      "name": "section_header_height",
+      "value": "36vp"
+    },
+    {
+      "name": "section_border_radius",
+      "value": "8vp"
+    },
+    {
+      "name": "section_arrow_size",
+      "value": "11fp"
+    },
+    {
+      "name": "page_padding",
+      "value": "12vp"
+    },
+    {
+      "name": "section_spacing",
+      "value": "6vp"
+    },
+    {
+      "name": "btn_spacing",
+      "value": "6vp"
+    },
+    {
+      "name": "label_width",
+      "value": "60vp"
+    },
+    {
+      "name": "port_input_width",
+      "value": "56vp"
+    },
+    {
+      "name": "send_btn_width",
+      "value": "100vp"
+    },
+    {
+      "name": "title_margin_top",
+      "value": "12vp"
+    },
+    {
+      "name": "title_margin_bottom",
+      "value": "8vp"
+    },
+    {
+      "name": "log_margin",
+      "value": "8vp"
+    },
+    {
+      "name": "log_padding_h",
+      "value": "8vp"
+    },
+    {
+      "name": "log_padding_v",
+      "value": "1vp"
+    },
+    {
+      "name": "clear_btn_margin_bottom",
+      "value": "12vp"
+    },
+    {
+      "name": "form_row_spacing",
+      "value": "4vp"
+    },
+    {
+      "name": "sftp_path_font_size",
+      "value": "11fp"
+    },
+    {
+      "name": "nav_input_height",
+      "value": "30vp"
     }
   ]
 }
