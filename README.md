@@ -1,46 +1,61 @@
 # HarmonyOS SSH Core (ssh_core)
 
-本项目是一个为 HarmonyOS (ArkTS/C++) 设计的生产级 SSH 与 SFTP 客户端核心库。它基于业界标准的 `libssh2` 构建，并采用高性能的 `OpenSSL 3.0` 作为密码学后端，通过 N-API 提供安全、稳定、异步的 ArkTS 接口。
+[English](./README_en.md) | 简体中文
 
-## 项目结构
+本项目是一个为 HarmonyOS 设计的 SSH 与 SFTP 客户端原生库。基于业界标准的 C/C++ 开源实现，通过 N-API 提供异步的 ArkTS 接口，使得鸿蒙应用能够原生具备远程服务器管理与文件传输能力。
 
-本项目基于多模块架构设计：
+项目分为 `ssh_lib` (核心 HAR 包) 和 `entry` (演示应用) 两个主要模块。
 
-- **`ssh_lib` (HAR 静态共享包)**：核心库模块。
-  - `src/main/cpp`：C++ N-API 桥接层。负责管理原生 Socket、线程安全的后台数据读取（用于 Shell）、以及异步的 N-API 任务。
-  - `src/main/cpp/third_party`：预编译的 `libssh2` 和 `OpenSSL` 静态库（按架构分类存储）。
-  - `src/main/ets`：ArkTS 侧的高级面向对象封装（`SshClient`、`EventEmitter`）。
-- **`entry` (HAP 应用程序)**：测试与演示模块。
-  - 包含了一个直观的 Smoke Test UI，用于测试连接、执行命令、交互式 Shell 通信以及 SFTP 文件系统管理。
+## 详细 API 文档
 
-## 核心特性
+有关 ArkTS 接口的详细调用方法、参数说明及高级流式操作指南，请参阅同级目录下的 API 文档：
+👉 **[API Reference (API.md)](./API.md)**
 
-1. **全面的认证方式支持**
-   - 支持常规的密码登录。
-   - 支持公钥/私钥认证（`connectWithKey`）。底层由 OpenSSL 自动从私钥（如 `BEGIN OPENSSH PRIVATE KEY`）推导公钥，无需额外提取。
-2. **交互式 Shell 与 PTY**
-   - 支持动态请求并重置 PTY 大小（`resizePty`），为 Terminal UI（如 xterm.js）提供完美支持。
-   - 内部维护独立的 C++ 读取线程，并通过 N-API 的 `napi_threadsafe_function` 以极低的延迟将终端数据抛给 ArkTS 侧的事件监听器。
-3. **SFTP 全功能文件管理**
-   - 包含完整的目录/文件操作：列出目录 (`sftpListDir`)、创建/删除目录、重命名、删除文件、获取文件状态信息 (`sftpStat`)。
-   - **文本与二进制双模传输**：提供便捷的 `string` 文本读写，以及全量的 `ArrayBuffer` 二进制读写接口。
-   - **流式大文件传输**：暴露底层的 POSIX 风格接口 (`open`, `read`, `write`, `close`)，允许 ArkTS 侧进行内存友好的分块（Chunk）读写，轻松实现上传/下载进度条。
-4. **稳定与内存安全**
-   - 所有的 N-API 方法均采用 `napi_async_work` 防止阻塞主线程。
-   - C++ 上下文 (`SshContext`) 严格管理生命周期，确保 Socket、句柄以及后台线程在断开连接或应用退出时被安全释放。
+## 底层依赖与精简说明
 
-## 如何接入
+为了在鸿蒙端提供最佳的兼容性与体积控制，本项目集成了以下三个开源库的预编译二进制或源码，并进行了必要的平台适配与多余组件（如测试用例、CLI 工具）的剔除：
 
-其他鸿蒙项目如果需要使用该库，可以通过本地 HAR 依赖引入：
-在工程的 `oh-package.json5` 中添加：
+1. **[libssh2](https://github.com/libssh2/libssh2)**
+   - **用途**：提供底层的 SSH2 协议解析、通道复用、SFTP 子系统实现。
+   - **适配与精简**：剔除了测试代码与构建脚本。通过 N-API 将其阻塞的 POSIX Socket 操作异步化，封装为 Promise 以防止阻塞应用主线程。
+2. **[OpenSSL](https://github.com/openssl/openssl)** (主密码学后端)
+   - **用途**：提供高性能的加密算法支持（如 RSA/Ed25519 密钥解析、数据流加解密）。
+   - **适配与精简**：预编译了 HarmonyOS 对应架构（arm64-v8a 等）的静态库 (`libcrypto.a`, `libssl.a`)。为了精简安装包体积，移除了所有与核心加密无关的可执行文件、引擎插件 (engines) 与历史遗留配置脚本。
+3. **[mbedTLS](https://github.com/Mbed-TLS/mbedtls)** (可选轻量级后端)
+   - **用途**：作为 OpenSSL 的轻量级替代方案。
+   - **适配**：可以在 `ssh_lib/src/main/cpp/CMakeLists.txt` 中通过切换 `USE_OPENSSL` 开关来进行后端替换，适用于对安装包体积有极度严苛要求的场景。
+
+## 核心特性介绍
+
+1. **多格式密钥认证**
+   - 原生支持密码登录。
+   - 依赖 OpenSSL，自动支持解析标准 OpenSSH 格式的私钥（如 `-----BEGIN OPENSSH PRIVATE KEY-----`）以及带密码保护（Passphrase）的私钥，开发者无需手动从中分离提取公钥。
+2. **交互式 Shell 通信**
+   - 内部维护独立的 C++ Socket 读取线程。当终端数据到达时，利用 N-API 的 `napi_threadsafe_function` 将数据非阻塞地安全推送给 ArkTS 侧。
+   - 开放了 PTY 大小调整 (`resizePty`) 接口，便于前端无缝集成类似 `xterm.js` 的终端 UI 组件。
+3. **层次化的 SFTP 文件管理**
+   - **常规文件操作**：提供目录读取、属性查询 (`stat`)、创建/删除/重命名等标准 POSIX 语义接口。
+   - **快捷读写**：提供将远端文件直接读取为 `string` 或 `ArrayBuffer` 的全量内存读取接口，适合配置文件等小文件操作。
+   - **流式大文件传输**：暴露底层的 `open`, `read`, `write`, `close` 接口（返回文件句柄 `fd`），ArkTS 侧可以自行控制分块大小（Chunk）进行循环传输，有效控制内存峰值并易于实现下载/上传进度条功能。
+
+## 可运行演示 (Demo)
+
+`entry` 模块包含了一个完整的测试 UI，客观展示了 `ssh_lib` 的所有核心功能，可直接在鸿蒙模拟器或真机上运行。
+
+- **入口文件**：[`entry/src/main/ets/pages/Index.ets`](./entry/src/main/ets/pages/Index.ets)
+- **演示功能**：
+  - 输入目标 IP、端口、用户名和认证凭据进行连接。
+  - **Exec 模式**：执行单次非交互命令（如 `ls /`）并打印输出。
+  - **Shell 模式**：启动 PTY 并允许用户在输入框中向服务器发送实时终端指令。
+  - **SFTP 测试**：一键测试目录列出 (`sftpListDir`)、读取系统文本文件 (`/etc/hostname`)、以及二进制流式读取系统命令（如 `/bin/ls`）并进行 ELF 魔数验证。
+
+## 如何在项目中引入
+
+在你的 DevEco Studio 鸿蒙工程中，将本项目的 `ssh_lib` 作为本地共享包引入。在需要使用的模块的 `oh-package.json5` 中添加：
+
 ```json
 "dependencies": {
   "ssh_lib": "file:../path/to/ssh_core/ssh_lib"
 }
 ```
-
-## 编译与运行
-
-本项目使用 DevEco Studio 标准的 CMake + Hvigor 构建流程。
-- 打开 DevEco Studio，同步项目后直接运行 `entry` 模块即可在模拟器或真机上测试功能。
-- 在 `ssh_lib` 的 `CMakeLists.txt` 中，可以通过修改构建变量（如 `USE_OPENSSL`）来定制底层的加密引擎。
+随后执行 `ohpm install` (或点击 IDE 的 Sync) 即可使用。
