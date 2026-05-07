@@ -1,4 +1,4 @@
-# HarmonyOS SSH Core (ssh_core)
+# HarmonyOS SSH Core - ohos-ssh-core
 
 [English](./README_en.md) | 简体中文
 
@@ -59,3 +59,14 @@
 }
 ```
 随后执行 `ohpm install` (或点击 IDE 的 Sync) 即可使用。
+
+## 开源协议 (License)
+
+本项目采用 [Apache License 2.0](./LICENSE) 开源协议。
+
+本项目集成的第三方组件均遵循其原始的开源许可协议：
+- **OpenSSL**: Apache License 2.0
+- **mbedTLS**: Apache License 2.0
+- **libssh2**: BSD 3-Clause License
+
+详细的协议文本与版权声明请参阅根目录下的 [`LICENSE`](./LICENSE) 文件。

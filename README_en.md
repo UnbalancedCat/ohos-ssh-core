@@ -1,4 +1,4 @@
-# HarmonyOS SSH Core (ssh_core)
+# HarmonyOS SSH Core - ohos-ssh-core
 
 [简体中文](./README.md) | English
 
@@ -59,3 +59,14 @@ In your DevEco Studio HarmonyOS project, import `ssh_lib` as a local shared pack
 }
 ```
 Then execute `ohpm install` (or click Sync in the IDE) to start using it.
+
+## License
+
+This project is licensed under the [Apache License 2.0](./LICENSE).
+
+The third-party components integrated into this project are distributed under their original open-source licenses:
+- **OpenSSL**: Apache License 2.0
+- **mbedTLS**: Apache License 2.0
+- **libssh2**: BSD 3-Clause License
+
+For detailed license texts and copyright notices, please refer to the [`LICENSE`](./LICENSE) file in the root directory.
