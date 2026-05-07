@@ -1,1 +1,1 @@
-export { MainPage } from './src/main/ets/components/MainPage';
+export { SshClient, SshState } from './src/main/ets/SshClient';

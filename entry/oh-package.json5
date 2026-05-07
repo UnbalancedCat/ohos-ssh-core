@@ -6,6 +6,6 @@
   "author": "",
   "license": "",
   "dependencies": {
-    "libssh_core.so": "file:./src/main/cpp/types/libssh_core"
+    "ssh_lib": "file:../ssh_lib"
   }
 }
