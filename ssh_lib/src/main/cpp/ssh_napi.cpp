@@ -184,8 +184,8 @@ static void ConnectExecute(napi_env env, void *data) {
             ctx->session,
             d->username.c_str(),
             d->username.length(),
-            d->publicKey.empty() ? nullptr : d->publicKey.c_str(),
-            d->publicKey.length(),
+            nullptr,  // OpenSSL derives public key from private key
+            0,
             d->privateKey.c_str(),
             d->privateKey.length(),
             d->passphrase.empty() ? nullptr : d->passphrase.c_str()
@@ -298,8 +298,8 @@ static napi_value ConnectWithKey(napi_env env, napi_callback_info info) {
     napi_value args[6];
     napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
 
-    if (argc < 6) {
-        return ThrowError(env, "connectWithKey requires at least 6 arguments: handle, host, port, username, publicKey, privateKey, [passphrase]");
+    if (argc < 5) {
+        return ThrowError(env, "connectWithKey requires at least 5 arguments: handle, host, port, username, privateKey, [passphrase]");
     }
 
     auto *d = new ConnectData();
@@ -326,24 +326,19 @@ static napi_value ConnectWithKey(napi_env env, napi_callback_info info) {
     d->username.resize(strLen);
     napi_get_value_string_utf8(env, args[3], &d->username[0], strLen + 1, &strLen);
 
-    // Extract publicKey
-    napi_get_value_string_utf8(env, args[4], nullptr, 0, &strLen);
-    d->publicKey.resize(strLen);
-    napi_get_value_string_utf8(env, args[4], &d->publicKey[0], strLen + 1, &strLen);
-
     // Extract privateKey
-    napi_get_value_string_utf8(env, args[5], nullptr, 0, &strLen);
+    napi_get_value_string_utf8(env, args[4], nullptr, 0, &strLen);
     d->privateKey.resize(strLen);
-    napi_get_value_string_utf8(env, args[5], &d->privateKey[0], strLen + 1, &strLen);
+    napi_get_value_string_utf8(env, args[4], &d->privateKey[0], strLen + 1, &strLen);
 
     // Extract passphrase (optional)
-    if (argc >= 7) {
+    if (argc >= 6) {
         napi_valuetype type;
-        napi_typeof(env, args[6], &type);
+        napi_typeof(env, args[5], &type);
         if (type == napi_string) {
-            napi_get_value_string_utf8(env, args[6], nullptr, 0, &strLen);
+            napi_get_value_string_utf8(env, args[5], nullptr, 0, &strLen);
             d->passphrase.resize(strLen);
-            napi_get_value_string_utf8(env, args[6], &d->passphrase[0], strLen + 1, &strLen);
+            napi_get_value_string_utf8(env, args[5], &d->passphrase[0], strLen + 1, &strLen);
         }
     }
 
@@ -772,6 +767,656 @@ static napi_value ResizePty(napi_env env, napi_callback_info info) {
     napi_get_undefined(env, &undefined);
     return undefined;
 }
+// ===================================================================
+// SFTP Operations
+// ===================================================================
+
+// --- sftpInit(handle) -> Promise<void> ---
+struct SftpSimpleData {
+    SshContext *ctx;
+    bool success = false;
+    std::string errorMsg;
+    std::string result; // For operations that return data
+    std::string path;
+    std::string path2; // For rename (dest)
+    std::string data;  // For write
+    int opType = 0;    // Operation type discriminator
+    napi_deferred deferred;
+    napi_async_work work;
+};
+
+static void SftpInitExecute(napi_env env, void *data) {
+    auto *d = static_cast<SftpSimpleData *>(data);
+    SshContext *ctx = d->ctx;
+    if (ctx->state != SshState::CONNECTED) { d->errorMsg = "Not connected"; return; }
+    libssh2_session_set_blocking(ctx->session, 1);
+    ctx->sftp = libssh2_sftp_init(ctx->session);
+    if (!ctx->sftp) {
+        d->errorMsg = "SFTP init failed: " + GetSessionError(ctx->session);
+        return;
+    }
+    d->success = true;
+}
+
+static void SftpSimpleComplete(napi_env env, napi_status status, void *data) {
+    auto *d = static_cast<SftpSimpleData *>(data);
+    if (d->success) {
+        if (d->result.empty()) {
+            napi_value undefined;
+            napi_get_undefined(env, &undefined);
+            napi_resolve_deferred(env, d->deferred, undefined);
+        } else {
+            napi_value result;
+            napi_create_string_utf8(env, d->result.c_str(), d->result.size(), &result);
+            napi_resolve_deferred(env, d->deferred, result);
+        }
+    } else {
+        napi_value errMsg;
+        napi_create_string_utf8(env, d->errorMsg.c_str(), NAPI_AUTO_LENGTH, &errMsg);
+        napi_value error;
+        napi_create_error(env, nullptr, errMsg, &error);
+        napi_reject_deferred(env, d->deferred, error);
+    }
+    napi_delete_async_work(env, d->work);
+    delete d;
+}
+
+static napi_value SftpInit(napi_env env, napi_callback_info info) {
+    size_t argc = 1;
+    napi_value args[1];
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+    if (argc < 1) return ThrowError(env, "sftpInit requires 1 argument: handle");
+
+    auto *d = new SftpSimpleData();
+    d->ctx = UnwrapContext(env, args[0]);
+    if (!d->ctx) { delete d; return ThrowError(env, "Invalid SSH handle"); }
+
+    napi_value promise;
+    napi_create_promise(env, &d->deferred, &promise);
+    napi_value workName;
+    napi_create_string_utf8(env, "sftp_init", NAPI_AUTO_LENGTH, &workName);
+    napi_create_async_work(env, nullptr, workName, SftpInitExecute, SftpSimpleComplete, d, &d->work);
+    napi_queue_async_work(env, d->work);
+    return promise;
+}
+
+// --- sftpShutdown(handle) -> Promise<void> ---
+static void SftpShutdownExecute(napi_env env, void *data) {
+    auto *d = static_cast<SftpSimpleData *>(data);
+    SshContext *ctx = d->ctx;
+    if (!ctx->sftp) { d->errorMsg = "SFTP not initialized"; return; }
+    libssh2_session_set_blocking(ctx->session, 1);
+    libssh2_sftp_shutdown(ctx->sftp);
+    ctx->sftp = nullptr;
+    d->success = true;
+}
+
+static napi_value SftpShutdown(napi_env env, napi_callback_info info) {
+    size_t argc = 1;
+    napi_value args[1];
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+    if (argc < 1) return ThrowError(env, "sftpShutdown requires 1 argument: handle");
+
+    auto *d = new SftpSimpleData();
+    d->ctx = UnwrapContext(env, args[0]);
+    if (!d->ctx) { delete d; return ThrowError(env, "Invalid SSH handle"); }
+
+    napi_value promise;
+    napi_create_promise(env, &d->deferred, &promise);
+    napi_value workName;
+    napi_create_string_utf8(env, "sftp_shutdown", NAPI_AUTO_LENGTH, &workName);
+    napi_create_async_work(env, nullptr, workName, SftpShutdownExecute, SftpSimpleComplete, d, &d->work);
+    napi_queue_async_work(env, d->work);
+    return promise;
+}
+
+// --- sftpListDir(handle, path) -> Promise<string> (JSON array) ---
+static void SftpListDirExecute(napi_env env, void *data) {
+    auto *d = static_cast<SftpSimpleData *>(data);
+    SshContext *ctx = d->ctx;
+    if (!ctx->sftp) { d->errorMsg = "SFTP not initialized"; return; }
+    libssh2_session_set_blocking(ctx->session, 1);
+
+    LIBSSH2_SFTP_HANDLE *dirHandle = libssh2_sftp_opendir(ctx->sftp, d->path.c_str());
+    if (!dirHandle) {
+        d->errorMsg = "Failed to open directory: " + d->path;
+        return;
+    }
+
+    std::string json = "[";
+    char nameBuf[512];
+    LIBSSH2_SFTP_ATTRIBUTES attrs;
+    bool first = true;
+
+    while (true) {
+        int rc = libssh2_sftp_readdir(dirHandle, nameBuf, sizeof(nameBuf), &attrs);
+        if (rc <= 0) break;
+
+        std::string name(nameBuf, rc);
+        if (name == "." || name == "..") continue;
+
+        if (!first) json += ",";
+        first = false;
+
+        bool isDir = (attrs.flags & LIBSSH2_SFTP_ATTR_PERMISSIONS) &&
+                     LIBSSH2_SFTP_S_ISDIR(attrs.permissions);
+        unsigned long size = (attrs.flags & LIBSSH2_SFTP_ATTR_SIZE) ? (unsigned long)attrs.filesize : 0;
+        unsigned long perms = (attrs.flags & LIBSSH2_SFTP_ATTR_PERMISSIONS) ? attrs.permissions : 0;
+        unsigned long mtime = (attrs.flags & LIBSSH2_SFTP_ATTR_ACMODTIME) ? attrs.mtime : 0;
+
+        // Escape quotes in filename
+        std::string escaped;
+        for (char c : name) {
+            if (c == '"') escaped += "\\\"";
+            else if (c == '\\') escaped += "\\\\";
+            else escaped += c;
+        }
+
+        json += "{\"name\":\"" + escaped + "\""
+             + ",\"size\":" + std::to_string(size)
+             + ",\"permissions\":" + std::to_string(perms)
+             + ",\"mtime\":" + std::to_string(mtime)
+             + ",\"isDir\":" + (isDir ? "true" : "false")
+             + "}";
+    }
+
+    json += "]";
+    libssh2_sftp_closedir(dirHandle);
+    d->result = json;
+    d->success = true;
+}
+
+static napi_value SftpListDir(napi_env env, napi_callback_info info) {
+    size_t argc = 2;
+    napi_value args[2];
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+    if (argc < 2) return ThrowError(env, "sftpListDir requires 2 arguments: handle, path");
+
+    auto *d = new SftpSimpleData();
+    d->ctx = UnwrapContext(env, args[0]);
+    if (!d->ctx) { delete d; return ThrowError(env, "Invalid SSH handle"); }
+
+    size_t strLen = 0;
+    napi_get_value_string_utf8(env, args[1], nullptr, 0, &strLen);
+    d->path.resize(strLen);
+    napi_get_value_string_utf8(env, args[1], &d->path[0], strLen + 1, &strLen);
+
+    napi_value promise;
+    napi_create_promise(env, &d->deferred, &promise);
+    napi_value workName;
+    napi_create_string_utf8(env, "sftp_listdir", NAPI_AUTO_LENGTH, &workName);
+    napi_create_async_work(env, nullptr, workName, SftpListDirExecute, SftpSimpleComplete, d, &d->work);
+    napi_queue_async_work(env, d->work);
+    return promise;
+}
+
+// --- sftpReadFile(handle, remotePath) -> Promise<string> ---
+static void SftpReadFileExecute(napi_env env, void *data) {
+    auto *d = static_cast<SftpSimpleData *>(data);
+    SshContext *ctx = d->ctx;
+    if (!ctx->sftp) { d->errorMsg = "SFTP not initialized"; return; }
+    libssh2_session_set_blocking(ctx->session, 1);
+
+    LIBSSH2_SFTP_HANDLE *fh = libssh2_sftp_open(ctx->sftp, d->path.c_str(),
+                                                  LIBSSH2_FXF_READ, 0);
+    if (!fh) {
+        d->errorMsg = "Failed to open file: " + d->path;
+        return;
+    }
+
+    char buf[8192];
+    std::string content;
+    for (;;) {
+        ssize_t n = libssh2_sftp_read(fh, buf, sizeof(buf));
+        if (n > 0) content.append(buf, n);
+        else if (n == 0) break;
+        else if (n == LIBSSH2_ERROR_EAGAIN) continue;
+        else { d->errorMsg = "Read error"; libssh2_sftp_close(fh); return; }
+    }
+
+    libssh2_sftp_close(fh);
+    d->result = content;
+    d->success = true;
+}
+
+static napi_value SftpReadFile(napi_env env, napi_callback_info info) {
+    size_t argc = 2;
+    napi_value args[2];
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+    if (argc < 2) return ThrowError(env, "sftpReadFile requires 2 arguments: handle, remotePath");
+
+    auto *d = new SftpSimpleData();
+    d->ctx = UnwrapContext(env, args[0]);
+    if (!d->ctx) { delete d; return ThrowError(env, "Invalid SSH handle"); }
+
+    size_t strLen = 0;
+    napi_get_value_string_utf8(env, args[1], nullptr, 0, &strLen);
+    d->path.resize(strLen);
+    napi_get_value_string_utf8(env, args[1], &d->path[0], strLen + 1, &strLen);
+
+    napi_value promise;
+    napi_create_promise(env, &d->deferred, &promise);
+    napi_value workName;
+    napi_create_string_utf8(env, "sftp_readfile", NAPI_AUTO_LENGTH, &workName);
+    napi_create_async_work(env, nullptr, workName, SftpReadFileExecute, SftpSimpleComplete, d, &d->work);
+    napi_queue_async_work(env, d->work);
+    return promise;
+}
+
+// --- sftpWriteFile(handle, remotePath, data) -> Promise<void> ---
+static void SftpWriteFileExecute(napi_env env, void *data) {
+    auto *d = static_cast<SftpSimpleData *>(data);
+    SshContext *ctx = d->ctx;
+    if (!ctx->sftp) { d->errorMsg = "SFTP not initialized"; return; }
+    libssh2_session_set_blocking(ctx->session, 1);
+
+    LIBSSH2_SFTP_HANDLE *fh = libssh2_sftp_open(ctx->sftp, d->path.c_str(),
+        LIBSSH2_FXF_WRITE | LIBSSH2_FXF_CREAT | LIBSSH2_FXF_TRUNC,
+        LIBSSH2_SFTP_S_IRUSR | LIBSSH2_SFTP_S_IWUSR |
+        LIBSSH2_SFTP_S_IRGRP | LIBSSH2_SFTP_S_IROTH);
+    if (!fh) {
+        d->errorMsg = "Failed to open file for writing: " + d->path;
+        return;
+    }
+
+    const char *ptr = d->data.c_str();
+    size_t remaining = d->data.size();
+    while (remaining > 0) {
+        ssize_t n = libssh2_sftp_write(fh, ptr, remaining);
+        if (n > 0) { ptr += n; remaining -= n; }
+        else if (n == LIBSSH2_ERROR_EAGAIN) continue;
+        else { d->errorMsg = "Write error"; libssh2_sftp_close(fh); return; }
+    }
+
+    libssh2_sftp_close(fh);
+    d->success = true;
+}
+
+static napi_value SftpWriteFile(napi_env env, napi_callback_info info) {
+    size_t argc = 3;
+    napi_value args[3];
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+    if (argc < 3) return ThrowError(env, "sftpWriteFile requires 3 arguments: handle, remotePath, data");
+
+    auto *d = new SftpSimpleData();
+    d->ctx = UnwrapContext(env, args[0]);
+    if (!d->ctx) { delete d; return ThrowError(env, "Invalid SSH handle"); }
+
+    size_t strLen = 0;
+    napi_get_value_string_utf8(env, args[1], nullptr, 0, &strLen);
+    d->path.resize(strLen);
+    napi_get_value_string_utf8(env, args[1], &d->path[0], strLen + 1, &strLen);
+
+    napi_get_value_string_utf8(env, args[2], nullptr, 0, &strLen);
+    d->data.resize(strLen);
+    napi_get_value_string_utf8(env, args[2], &d->data[0], strLen + 1, &strLen);
+
+    napi_value promise;
+    napi_create_promise(env, &d->deferred, &promise);
+    napi_value workName;
+    napi_create_string_utf8(env, "sftp_writefile", NAPI_AUTO_LENGTH, &workName);
+    napi_create_async_work(env, nullptr, workName, SftpWriteFileExecute, SftpSimpleComplete, d, &d->work);
+    napi_queue_async_work(env, d->work);
+    return promise;
+}
+
+// --- sftpDelete / sftpMkdir / sftpRmdir --- (share one executor with opType)
+static void SftpPathOpExecute(napi_env env, void *data) {
+    auto *d = static_cast<SftpSimpleData *>(data);
+    SshContext *ctx = d->ctx;
+    if (!ctx->sftp) { d->errorMsg = "SFTP not initialized"; return; }
+    libssh2_session_set_blocking(ctx->session, 1);
+
+    int rc = -1;
+    switch (d->opType) {
+        case 1: rc = libssh2_sftp_unlink(ctx->sftp, d->path.c_str()); break;
+        case 2: rc = libssh2_sftp_mkdir(ctx->sftp, d->path.c_str(),
+                    LIBSSH2_SFTP_S_IRWXU | LIBSSH2_SFTP_S_IRGRP | LIBSSH2_SFTP_S_IXGRP |
+                    LIBSSH2_SFTP_S_IROTH | LIBSSH2_SFTP_S_IXOTH); break;
+        case 3: rc = libssh2_sftp_rmdir(ctx->sftp, d->path.c_str()); break;
+    }
+
+    if (rc != 0) {
+        const char *ops[] = {"", "delete", "mkdir", "rmdir"};
+        d->errorMsg = std::string("SFTP ") + ops[d->opType] + " failed: " + GetSessionError(ctx->session);
+        return;
+    }
+    d->success = true;
+}
+
+static napi_value SftpPathOp(napi_env env, napi_callback_info info, int opType, const char* opName) {
+    size_t argc = 2;
+    napi_value args[2];
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+    if (argc < 2) return ThrowError(env, "requires 2 arguments: handle, path");
+
+    auto *d = new SftpSimpleData();
+    d->ctx = UnwrapContext(env, args[0]);
+    if (!d->ctx) { delete d; return ThrowError(env, "Invalid SSH handle"); }
+    d->opType = opType;
+
+    size_t strLen = 0;
+    napi_get_value_string_utf8(env, args[1], nullptr, 0, &strLen);
+    d->path.resize(strLen);
+    napi_get_value_string_utf8(env, args[1], &d->path[0], strLen + 1, &strLen);
+
+    napi_value promise;
+    napi_create_promise(env, &d->deferred, &promise);
+    napi_value workName;
+    napi_create_string_utf8(env, opName, NAPI_AUTO_LENGTH, &workName);
+    napi_create_async_work(env, nullptr, workName, SftpPathOpExecute, SftpSimpleComplete, d, &d->work);
+    napi_queue_async_work(env, d->work);
+    return promise;
+}
+
+static napi_value SftpDelete(napi_env env, napi_callback_info info) { return SftpPathOp(env, info, 1, "sftp_delete"); }
+static napi_value SftpMkdir(napi_env env, napi_callback_info info) { return SftpPathOp(env, info, 2, "sftp_mkdir"); }
+static napi_value SftpRmdir(napi_env env, napi_callback_info info) { return SftpPathOp(env, info, 3, "sftp_rmdir"); }
+
+// --- sftpRename(handle, src, dst) -> Promise<void> ---
+static void SftpRenameExecute(napi_env env, void *data) {
+    auto *d = static_cast<SftpSimpleData *>(data);
+    SshContext *ctx = d->ctx;
+    if (!ctx->sftp) { d->errorMsg = "SFTP not initialized"; return; }
+    libssh2_session_set_blocking(ctx->session, 1);
+
+    int rc = libssh2_sftp_rename(ctx->sftp, d->path.c_str(), d->path2.c_str());
+    if (rc != 0) {
+        d->errorMsg = "SFTP rename failed: " + GetSessionError(ctx->session);
+        return;
+    }
+    d->success = true;
+}
+
+static napi_value SftpRename(napi_env env, napi_callback_info info) {
+    size_t argc = 3;
+    napi_value args[3];
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+    if (argc < 3) return ThrowError(env, "sftpRename requires 3 arguments: handle, src, dst");
+
+    auto *d = new SftpSimpleData();
+    d->ctx = UnwrapContext(env, args[0]);
+    if (!d->ctx) { delete d; return ThrowError(env, "Invalid SSH handle"); }
+
+    size_t strLen = 0;
+    napi_get_value_string_utf8(env, args[1], nullptr, 0, &strLen);
+    d->path.resize(strLen);
+    napi_get_value_string_utf8(env, args[1], &d->path[0], strLen + 1, &strLen);
+
+    napi_get_value_string_utf8(env, args[2], nullptr, 0, &strLen);
+    d->path2.resize(strLen);
+    napi_get_value_string_utf8(env, args[2], &d->path2[0], strLen + 1, &strLen);
+
+    napi_value promise;
+    napi_create_promise(env, &d->deferred, &promise);
+    napi_value workName;
+    napi_create_string_utf8(env, "sftp_rename", NAPI_AUTO_LENGTH, &workName);
+    napi_create_async_work(env, nullptr, workName, SftpRenameExecute, SftpSimpleComplete, d, &d->work);
+    napi_queue_async_work(env, d->work);
+    return promise;
+}
+
+// --- sftpStat(handle, path) -> Promise<string> (JSON) ---
+static void SftpStatExecute(napi_env env, void *data) {
+    auto *d = static_cast<SftpSimpleData *>(data);
+    SshContext *ctx = d->ctx;
+    if (!ctx->sftp) { d->errorMsg = "SFTP not initialized"; return; }
+    libssh2_session_set_blocking(ctx->session, 1);
+
+    LIBSSH2_SFTP_ATTRIBUTES attrs;
+    int rc = libssh2_sftp_stat(ctx->sftp, d->path.c_str(), &attrs);
+    if (rc != 0) {
+        d->errorMsg = "SFTP stat failed: " + GetSessionError(ctx->session);
+        return;
+    }
+
+    bool isDir = (attrs.flags & LIBSSH2_SFTP_ATTR_PERMISSIONS) &&
+                 LIBSSH2_SFTP_S_ISDIR(attrs.permissions);
+    unsigned long size = (attrs.flags & LIBSSH2_SFTP_ATTR_SIZE) ? (unsigned long)attrs.filesize : 0;
+    unsigned long perms = (attrs.flags & LIBSSH2_SFTP_ATTR_PERMISSIONS) ? attrs.permissions : 0;
+    unsigned long mtime = (attrs.flags & LIBSSH2_SFTP_ATTR_ACMODTIME) ? attrs.mtime : 0;
+
+    // Escape path for JSON
+    std::string escaped;
+    for (char c : d->path) {
+        if (c == '"') escaped += "\\\"";
+        else if (c == '\\') escaped += "\\\\";
+        else escaped += c;
+    }
+
+    d->result = "{\"name\":\"" + escaped + "\""
+             + ",\"size\":" + std::to_string(size)
+             + ",\"permissions\":" + std::to_string(perms)
+             + ",\"mtime\":" + std::to_string(mtime)
+             + ",\"isDir\":" + (isDir ? "true" : "false")
+             + "}";
+    d->success = true;
+}
+
+static napi_value SftpStat(napi_env env, napi_callback_info info) {
+    size_t argc = 2;
+    napi_value args[2];
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+    if (argc < 2) return ThrowError(env, "sftpStat requires 2 arguments: handle, path");
+
+    auto *d = new SftpSimpleData();
+    d->ctx = UnwrapContext(env, args[0]);
+    if (!d->ctx) { delete d; return ThrowError(env, "Invalid SSH handle"); }
+
+    size_t strLen = 0;
+    napi_get_value_string_utf8(env, args[1], nullptr, 0, &strLen);
+    d->path.resize(strLen);
+    napi_get_value_string_utf8(env, args[1], &d->path[0], strLen + 1, &strLen);
+
+    napi_value promise;
+    napi_create_promise(env, &d->deferred, &promise);
+    napi_value workName;
+    napi_create_string_utf8(env, "sftp_stat", NAPI_AUTO_LENGTH, &workName);
+    napi_create_async_work(env, nullptr, workName, SftpStatExecute, SftpSimpleComplete, d, &d->work);
+    napi_queue_async_work(env, d->work);
+    return promise;
+}
+
+// --- Binary & Streaming SFTP Operations ---
+struct SftpBinaryData {
+    SshContext *ctx;
+    bool success = false;
+    std::string errorMsg;
+    int opType = 0; // 1: open, 2: read, 3: write, 4: close
+    std::string path;
+    int fd = -1;
+    long flags = 0;
+    long mode = 0;
+    size_t size = 0;
+    std::vector<uint8_t> buffer;
+    napi_deferred deferred;
+    napi_async_work work;
+};
+
+static void SftpBinaryExecute(napi_env env, void *data) {
+    auto *d = static_cast<SftpBinaryData *>(data);
+    SshContext *ctx = d->ctx;
+    if (!ctx->sftp && d->opType != 4) { d->errorMsg = "SFTP not initialized"; return; }
+    libssh2_session_set_blocking(ctx->session, 1);
+
+    if (d->opType == 1) { // open
+        LIBSSH2_SFTP_HANDLE *fh = libssh2_sftp_open(ctx->sftp, d->path.c_str(), d->flags, d->mode);
+        if (!fh) {
+            d->errorMsg = "Failed to open file";
+            return;
+        }
+        d->fd = ctx->nextFd++;
+        ctx->openFiles[d->fd] = fh;
+        d->success = true;
+    } else if (d->opType == 2) { // read
+        auto it = ctx->openFiles.find(d->fd);
+        if (it == ctx->openFiles.end()) { d->errorMsg = "Invalid fd"; return; }
+        LIBSSH2_SFTP_HANDLE *fh = it->second;
+        
+        d->buffer.resize(d->size);
+        ssize_t n = libssh2_sftp_read(fh, reinterpret_cast<char*>(d->buffer.data()), d->size);
+        if (n < 0 && n != LIBSSH2_ERROR_EAGAIN) {
+            d->errorMsg = "Read error";
+            return;
+        }
+        if (n < 0) n = 0; // EAGAIN fallback though blocking
+        d->buffer.resize(n);
+        d->success = true;
+    } else if (d->opType == 3) { // write
+        auto it = ctx->openFiles.find(d->fd);
+        if (it == ctx->openFiles.end()) { d->errorMsg = "Invalid fd"; return; }
+        LIBSSH2_SFTP_HANDLE *fh = it->second;
+        
+        const char *ptr = reinterpret_cast<const char*>(d->buffer.data());
+        size_t remaining = d->buffer.size();
+        while (remaining > 0) {
+            ssize_t n = libssh2_sftp_write(fh, ptr, remaining);
+            if (n > 0) { ptr += n; remaining -= n; }
+            else if (n == LIBSSH2_ERROR_EAGAIN) continue;
+            else { d->errorMsg = "Write error"; return; }
+        }
+        d->success = true;
+    } else if (d->opType == 4) { // close
+        auto it = ctx->openFiles.find(d->fd);
+        if (it == ctx->openFiles.end()) { d->errorMsg = "Invalid fd"; return; }
+        LIBSSH2_SFTP_HANDLE *fh = it->second;
+        libssh2_sftp_close(fh);
+        ctx->openFiles.erase(it);
+        d->success = true;
+    }
+}
+
+static void SftpBinaryComplete(napi_env env, napi_status status, void *data) {
+    auto *d = static_cast<SftpBinaryData *>(data);
+    if (d->success) {
+        napi_value result;
+        if (d->opType == 1) { // open -> returns fd
+            napi_create_int32(env, d->fd, &result);
+            napi_resolve_deferred(env, d->deferred, result);
+        } else if (d->opType == 2) { // read -> returns ArrayBuffer
+            void* arrayData = nullptr;
+            napi_create_arraybuffer(env, d->buffer.size(), &arrayData, &result);
+            if (d->buffer.size() > 0) {
+                memcpy(arrayData, d->buffer.data(), d->buffer.size());
+            }
+            napi_resolve_deferred(env, d->deferred, result);
+        } else { // write, close -> returns void
+            napi_get_undefined(env, &result);
+            napi_resolve_deferred(env, d->deferred, result);
+        }
+    } else {
+        napi_value errMsg, error;
+        napi_create_string_utf8(env, d->errorMsg.c_str(), NAPI_AUTO_LENGTH, &errMsg);
+        napi_create_error(env, nullptr, errMsg, &error);
+        napi_reject_deferred(env, d->deferred, error);
+    }
+    napi_delete_async_work(env, d->work);
+    delete d;
+}
+
+static napi_value SftpOpenFile(napi_env env, napi_callback_info info) {
+    size_t argc = 4;
+    napi_value args[4];
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+    if (argc < 4) return ThrowError(env, "Requires handle, path, flags, mode");
+
+    auto *d = new SftpBinaryData();
+    d->opType = 1;
+    d->ctx = UnwrapContext(env, args[0]);
+    if (!d->ctx) { delete d; return ThrowError(env, "Invalid handle"); }
+
+    size_t strLen = 0;
+    napi_get_value_string_utf8(env, args[1], nullptr, 0, &strLen);
+    d->path.resize(strLen);
+    napi_get_value_string_utf8(env, args[1], &d->path[0], strLen + 1, &strLen);
+
+    napi_get_value_int32(env, args[2], (int32_t*)&d->flags);
+    napi_get_value_int32(env, args[3], (int32_t*)&d->mode);
+
+    napi_value promise, workName;
+    napi_create_promise(env, &d->deferred, &promise);
+    napi_create_string_utf8(env, "sftp_open", NAPI_AUTO_LENGTH, &workName);
+    napi_create_async_work(env, nullptr, workName, SftpBinaryExecute, SftpBinaryComplete, d, &d->work);
+    napi_queue_async_work(env, d->work);
+    return promise;
+}
+
+static napi_value SftpRead(napi_env env, napi_callback_info info) {
+    size_t argc = 3;
+    napi_value args[3];
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+    if (argc < 3) return ThrowError(env, "Requires handle, fd, size");
+
+    auto *d = new SftpBinaryData();
+    d->opType = 2;
+    d->ctx = UnwrapContext(env, args[0]);
+    if (!d->ctx) { delete d; return ThrowError(env, "Invalid handle"); }
+
+    napi_get_value_int32(env, args[1], &d->fd);
+    int32_t size = 0;
+    napi_get_value_int32(env, args[2], &size);
+    d->size = size > 0 ? size : 0;
+
+    napi_value promise, workName;
+    napi_create_promise(env, &d->deferred, &promise);
+    napi_create_string_utf8(env, "sftp_read", NAPI_AUTO_LENGTH, &workName);
+    napi_create_async_work(env, nullptr, workName, SftpBinaryExecute, SftpBinaryComplete, d, &d->work);
+    napi_queue_async_work(env, d->work);
+    return promise;
+}
+
+static napi_value SftpWrite(napi_env env, napi_callback_info info) {
+    size_t argc = 3;
+    napi_value args[3];
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+    if (argc < 3) return ThrowError(env, "Requires handle, fd, arraybuffer");
+
+    auto *d = new SftpBinaryData();
+    d->opType = 3;
+    d->ctx = UnwrapContext(env, args[0]);
+    if (!d->ctx) { delete d; return ThrowError(env, "Invalid handle"); }
+
+    napi_get_value_int32(env, args[1], &d->fd);
+
+    bool isArrayBuffer = false;
+    napi_is_arraybuffer(env, args[2], &isArrayBuffer);
+    if (isArrayBuffer) {
+        void* dataPtr = nullptr;
+        size_t byteLength = 0;
+        napi_get_arraybuffer_info(env, args[2], &dataPtr, &byteLength);
+        if (byteLength > 0 && dataPtr != nullptr) {
+            d->buffer.assign((uint8_t*)dataPtr, (uint8_t*)dataPtr + byteLength);
+        }
+    }
+
+    napi_value promise, workName;
+    napi_create_promise(env, &d->deferred, &promise);
+    napi_create_string_utf8(env, "sftp_write", NAPI_AUTO_LENGTH, &workName);
+    napi_create_async_work(env, nullptr, workName, SftpBinaryExecute, SftpBinaryComplete, d, &d->work);
+    napi_queue_async_work(env, d->work);
+    return promise;
+}
+
+static napi_value SftpCloseFile(napi_env env, napi_callback_info info) {
+    size_t argc = 2;
+    napi_value args[2];
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+    if (argc < 2) return ThrowError(env, "Requires handle, fd");
+
+    auto *d = new SftpBinaryData();
+    d->opType = 4;
+    d->ctx = UnwrapContext(env, args[0]);
+    if (!d->ctx) { delete d; return ThrowError(env, "Invalid handle"); }
+
+    napi_get_value_int32(env, args[1], &d->fd);
+
+    napi_value promise, workName;
+    napi_create_promise(env, &d->deferred, &promise);
+    napi_create_string_utf8(env, "sftp_close_file", NAPI_AUTO_LENGTH, &workName);
+    napi_create_async_work(env, nullptr, workName, SftpBinaryExecute, SftpBinaryComplete, d, &d->work);
+    napi_queue_async_work(env, d->work);
+    return promise;
+}
 
 // ===================================================================
 // disconnect(handle)
@@ -821,6 +1466,22 @@ napi_value RegisterSshNapi(napi_env env, napi_value exports) {
         {"writeToShell",   nullptr, WriteToShell,   nullptr, nullptr, nullptr, napi_default, nullptr},
         {"resizePty",      nullptr, ResizePty,      nullptr, nullptr, nullptr, napi_default, nullptr},
         {"disconnect",     nullptr, Disconnect,     nullptr, nullptr, nullptr, napi_default, nullptr},
+        // SFTP
+        {"sftpInit",       nullptr, SftpInit,       nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"sftpShutdown",   nullptr, SftpShutdown,   nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"sftpListDir",    nullptr, SftpListDir,    nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"sftpReadFile",   nullptr, SftpReadFile,   nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"sftpWriteFile",  nullptr, SftpWriteFile,  nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"sftpDelete",     nullptr, SftpDelete,     nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"sftpMkdir",      nullptr, SftpMkdir,      nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"sftpRmdir",      nullptr, SftpRmdir,      nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"sftpRename",     nullptr, SftpRename,     nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"sftpStat",       nullptr, SftpStat,       nullptr, nullptr, nullptr, napi_default, nullptr},
+        // SFTP Phase 2: Binary/Streaming
+        {"sftpOpenFile",   nullptr, SftpOpenFile,   nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"sftpRead",       nullptr, SftpRead,       nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"sftpWrite",      nullptr, SftpWrite,      nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"sftpCloseFile",  nullptr, SftpCloseFile,  nullptr, nullptr, nullptr, napi_default, nullptr},
     };
 
     napi_define_properties(env, exports, sizeof(desc) / sizeof(desc[0]), desc);

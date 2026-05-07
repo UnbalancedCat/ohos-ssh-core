@@ -1,5 +1,5 @@
 import { hilog } from "@kit.PerformanceAnalysisKit";
-import { SshClient, SshState } from "ssh_lib";
+import { SshClient, SshState, SftpFileInfo } from "ssh_lib";
 
 const DOMAIN = 0x0201;
 const TAG = "SshSmokeTest";
@@ -12,7 +12,6 @@ struct Index {
   @State port: string = "22";
   @State username: string = "root";
   @State password: string = "";
-  @State publicKey: string = "";
   @State privateKey: string = "";
   @State passphrase: string = "";
 
@@ -143,24 +142,8 @@ struct Index {
         }
         .width("100%")
         .margin({ bottom: 8 })
-
         Row() {
-          Text("Pub Key:")
-            .width(80)
-            .fontSize(14)
-          TextArea({ text: this.publicKey, placeholder: "ssh-rsa AAAAB3..." })
-            .onChange((val: string) => {
-              this.publicKey = val;
-            })
-            .layoutWeight(1)
-            .height(50)
-            .fontSize(12)
-        }
-        .width("100%")
-        .margin({ bottom: 6 })
-
-        Row() {
-          Text("Priv Key:")
+          Text("Key:")
             .width(80)
             .fontSize(14)
           TextArea({ text: this.privateKey, placeholder: "-----BEGIN PRIVATE KEY-----..." })
@@ -173,7 +156,6 @@ struct Index {
         }
         .width("100%")
         .margin({ bottom: 6 })
-
         Row() {
           Text("Passphrase:")
             .width(80)
@@ -219,7 +201,6 @@ struct Index {
                 this.logError("connect: " + (e as Error).message);
               }
             })
-
           Button("Connect (Key)")
             .fontSize(13)
             .layoutWeight(1)
@@ -235,9 +216,8 @@ struct Index {
                   this.host,
                   parseInt(this.port),
                   this.username,
-                  this.publicKey,
                   this.privateKey,
-                  this.passphrase
+                  this.passphrase,
                 );
                 this.isConnected = true;
                 this.log("[SUCCESS] connectWithKey OK - authenticated");
@@ -246,7 +226,6 @@ struct Index {
               }
             })
         }.width("100%")
-
         Row({ space: 8 }) {
           Button("Disconnect")
             .fontSize(13)
@@ -353,6 +332,75 @@ struct Index {
               })
           }.width("100%");
         }
+
+        // Row 5: SFTP
+        Row({ space: 8 }) {
+          Button("SFTP Init")
+            .fontSize(13)
+            .layoutWeight(1)
+            .enabled(this.isConnected)
+            .onClick(async () => {
+              try {
+                await this.client.sftpInit();
+                this.log("[SUCCESS] SFTP initialized");
+              } catch (e) {
+                this.logError("sftpInit: " + (e as Error).message);
+              }
+            })
+          Button("List /")
+            .fontSize(13)
+            .layoutWeight(1)
+            .enabled(this.isConnected)
+            .onClick(async () => {
+              try {
+                const entries = await this.client.sftpListDir("/");
+                this.log(`[SFTP] / has ${entries.length} entries:`);
+                entries.forEach((f) => {
+                  const tag = f.isDir ? "[DIR]" : "[FILE]";
+                  this.log(`  ${tag} ${f.name} (${f.size} bytes)`);
+                });
+              } catch (e) {
+                this.logError("sftpListDir: " + (e as Error).message);
+              }
+            })
+          Button("Read hostname")
+            .fontSize(13)
+            .layoutWeight(1)
+            .enabled(this.isConnected)
+            .onClick(async () => {
+              try {
+                const content = await this.client.sftpReadFile("/etc/hostname");
+                this.log("[SFTP] /etc/hostname: " + content.trim());
+              } catch (e) {
+                this.logError("sftpReadFile: " + (e as Error).message);
+              }
+            })
+        }.width("100%")
+
+        // Row 6: SFTP Binary
+        Row({ space: 8 }) {
+          Button("Read /bin/ls (Binary)")
+            .fontSize(13)
+            .layoutWeight(1)
+            .enabled(this.isConnected)
+            .onClick(async () => {
+              try {
+                this.log("[SFTP] Reading /bin/ls as ArrayBuffer...");
+                const startTime = Date.now();
+                const buffer = await this.client.sftpReadFileBytes("/bin/ls");
+                const elapsed = Date.now() - startTime;
+                
+                const size = buffer.byteLength;
+                const view = new Uint8Array(buffer);
+                const magic = size >= 4 ? `0x${view[0].toString(16)}${view[1].toString(16)}${view[2].toString(16)}${view[3].toString(16)}` : "unknown";
+                
+                this.log(`[SUCCESS] Read ${size} bytes in ${elapsed}ms.`);
+                this.log(`[SFTP] Magic bytes: ${magic}`);
+              } catch (e) {
+                this.logError("sftpReadFileBytes: " + (e as Error).message);
+              }
+            })
+        }.width("100%")
       }
       .padding({ left: 12, right: 12 })
       .width("100%")
@@ -368,7 +416,13 @@ struct Index {
             Text(line)
               .fontSize(11)
               .fontFamily("monospace")
-              .fontColor(line.includes("[ERROR]") ? Color.Red : Color.Black)
+              .fontColor(
+                line.includes("[ERROR]")
+                  ? Color.Red
+                  : line.includes("[SUCCESS]")
+                    ? Color.Green
+                    : Color.Black,
+              )
               .width("100%")
               .padding({ left: 8, right: 8, top: 1, bottom: 1 });
           })

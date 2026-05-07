@@ -6,7 +6,7 @@ export function createContext(): SshHandle;
 
 /** Connect to host and authenticate with password (async) */
 export const connect: (handle: SshHandle, host: string, port: number, user: string, pass: string) => Promise<void>;
-export const connectWithKey: (handle: SshHandle, host: string, port: number, user: string, publicKey: string, privateKey: string, passphrase?: string) => Promise<void>;
+export const connectWithKey: (handle: SshHandle, host: string, port: number, user: string, privateKey: string, passphrase?: string) => Promise<void>;
 
 /** Execute a single command and return its full output (async) */
 export function execCommand(
@@ -37,3 +37,55 @@ export function resizePty(
 
 /** Disconnect and release all resources (sync) */
 export function disconnect(handle: SshHandle): void;
+
+// ======= SFTP =======
+
+export interface SftpFileInfo {
+  name: string;
+  size: number;
+  permissions: number;
+  mtime: number;
+  isDir: boolean;
+}
+
+/** Initialize SFTP subsystem on the current session */
+export function sftpInit(handle: SshHandle): Promise<void>;
+
+/** Shutdown SFTP subsystem */
+export function sftpShutdown(handle: SshHandle): Promise<void>;
+
+/** List directory contents, returns JSON string */
+export function sftpListDir(handle: SshHandle, path: string): Promise<string>;
+
+/** Read a remote text file */
+export function sftpReadFile(handle: SshHandle, remotePath: string): Promise<string>;
+
+/** Write text data to a remote file (creates or overwrites) */
+export function sftpWriteFile(handle: SshHandle, remotePath: string, data: string): Promise<void>;
+
+/** Delete a remote file */
+export function sftpDelete(handle: SshHandle, path: string): Promise<void>;
+
+/** Create a remote directory */
+export function sftpMkdir(handle: SshHandle, path: string): Promise<void>;
+
+/** Remove a remote directory (must be empty) */
+export function sftpRmdir(handle: SshHandle, path: string): Promise<void>;
+
+/** Rename or move a remote file/directory */
+export function sftpRename(handle: SshHandle, src: string, dst: string): Promise<void>;
+
+/** Get file/directory attributes, returns JSON string */
+export function sftpStat(handle: SshHandle, path: string): Promise<string>;
+
+/** Open a file and return a file descriptor */
+export function sftpOpenFile(handle: SshHandle, path: string, flags: number, mode: number): Promise<number>;
+
+/** Read data from an open file descriptor */
+export function sftpRead(handle: SshHandle, fd: number, size: number): Promise<ArrayBuffer>;
+
+/** Write data to an open file descriptor */
+export function sftpWrite(handle: SshHandle, fd: number, data: ArrayBuffer): Promise<void>;
+
+/** Close an open file descriptor */
+export function sftpCloseFile(handle: SshHandle, fd: number): Promise<void>;
