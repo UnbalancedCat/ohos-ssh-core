@@ -30,11 +30,16 @@
 1. **多格式密钥认证**
    - 原生支持密码登录。
    - 依赖 OpenSSL，自动支持解析标准 OpenSSH 格式的私钥（如 `-----BEGIN OPENSSH PRIVATE KEY-----`）以及带密码保护（Passphrase）的私钥，开发者无需手动从中分离提取公钥。
-2. **交互式 Shell 通信**
+2. **安全与连接管理**
+   - **Host Key 指纹验证**：连接成功后可调用 `getHostKeyFingerprint()` 获取服务器公钥的 SHA-256 指纹（Base64 格式，与 `ssh-keygen -lf` 输出一致），支持实现 TOFU (Trust On First Use) 策略。
+   - **连接超时**：通过 `SshConnectOptions.timeoutSec` 设置 TCP + 握手超时（默认 10 秒），避免网络不可达时长时间挂起。
+   - **Keepalive 心跳**：通过 `SshConnectOptions.keepaliveInterval` 配置 `libssh2_keepalive_config`（默认 30 秒），防止 NAT 网关因空闲超时断开连接。
+   - **结构化错误分类**：所有异常均抛出 `SshError` 实例，携带 `SshErrorCode` 枚举（如 `NETWORK_ERROR`、`AUTH_FAILED`、`TIMEOUT`），便于调用方精确处理不同类型的错误。
+3. **交互式 Shell 通信**
    - 内部维护独立的 C++ Socket 读取线程。当终端数据到达时，利用 N-API 的 `napi_threadsafe_function` 将数据非阻塞地安全推送给 ArkTS 侧。
    - 开放了 PTY 大小调整 (`resizePty`) 接口，便于前端无缝集成类似 `xterm.js` 的终端 UI 组件。
-3. **层次化的 SFTP 文件管理**
-   - **常规文件操作**：提供目录读取、属性查询 (`stat`)、创建/删除/重命名等标准 POSIX 语义接口。
+4. **层次化的 SFTP 文件管理**
+   - **常规文件操作**：提供目录读取、属性查询 (`stat`)、权限修改 (`chmod`)、创建/删除/重命名等标准 POSIX 语义接口。
    - **快捷读写**：提供将远端文件直接读取为 `string` 或 `ArrayBuffer` 的全量内存读取接口，适合配置文件等小文件操作。
    - **流式大文件传输**：暴露底层的 `open`, `read`, `write`, `close` 接口（返回文件句柄 `fd`），ArkTS 侧可以自行控制分块大小（Chunk）进行循环传输，有效控制内存峰值并易于实现下载/上传进度条功能。
 

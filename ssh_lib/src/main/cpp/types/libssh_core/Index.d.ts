@@ -5,8 +5,8 @@ export interface SshHandle {}
 export function createContext(): SshHandle;
 
 /** Connect to host and authenticate with password (async) */
-export const connect: (handle: SshHandle, host: string, port: number, user: string, pass: string) => Promise<void>;
-export const connectWithKey: (handle: SshHandle, host: string, port: number, user: string, privateKey: string, passphrase?: string) => Promise<void>;
+export const connect: (handle: SshHandle, host: string, port: number, user: string, pass: string, timeoutSec?: number, keepaliveInterval?: number) => Promise<void>;
+export const connectWithKey: (handle: SshHandle, host: string, port: number, user: string, privateKey: string, passphrase?: string, timeoutSec?: number, keepaliveInterval?: number) => Promise<void>;
 
 /** Execute a single command and return its full output (async) */
 export function execCommand(
@@ -37,6 +37,9 @@ export function resizePty(
 
 /** Disconnect and release all resources (sync) */
 export function disconnect(handle: SshHandle): void;
+
+/** Get SHA-256 fingerprint of the server's host key (hex string, 64 chars). Must be called after connect. */
+export function getHostKeyFingerprint(handle: SshHandle): string;
 
 // ======= SFTP =======
 
@@ -77,6 +80,9 @@ export function sftpRename(handle: SshHandle, src: string, dst: string): Promise
 
 /** Get file/directory attributes, returns JSON string */
 export function sftpStat(handle: SshHandle, path: string): Promise<string>;
+
+/** Set file permissions (chmod) */
+export function sftpChmod(handle: SshHandle, path: string, mode: number): Promise<void>;
 
 /** Open a file and return a file descriptor */
 export function sftpOpenFile(handle: SshHandle, path: string, flags: number, mode: number): Promise<number>;

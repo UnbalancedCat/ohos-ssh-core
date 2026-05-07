@@ -102,6 +102,8 @@ struct ConnectData {
     std::string privateKey;
     std::string passphrase;
     bool isKeyAuth = false;
+    int timeoutSec = 10;
+    int keepaliveInterval = 30;
 
     // Output
     bool success = false;
@@ -137,6 +139,15 @@ static void ConnectExecute(napi_env env, void *data) {
         freeaddrinfo(res);
         ctx->state = SshState::ERROR;
         return;
+    }
+
+    // Set socket timeout
+    if (d->timeoutSec > 0) {
+        struct timeval tv;
+        tv.tv_sec = d->timeoutSec;
+        tv.tv_usec = 0;
+        setsockopt(ctx->sockfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+        setsockopt(ctx->sockfd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
     }
 
     rc = ::connect(ctx->sockfd, res->ai_addr, res->ai_addrlen);
@@ -218,6 +229,13 @@ static void ConnectExecute(napi_env env, void *data) {
     }
 
     SSH_LOGI("SSH authenticated as %{public}s", d->username.c_str());
+
+    // Configure keepalive
+    if (d->keepaliveInterval > 0) {
+        libssh2_keepalive_config(ctx->session, 1, d->keepaliveInterval);
+        SSH_LOGI("Keepalive configured: interval=%{public}d sec", d->keepaliveInterval);
+    }
+
     ctx->state = SshState::CONNECTED;
     d->success = true;
 }
@@ -242,8 +260,8 @@ static void ConnectComplete(napi_env env, napi_status status, void *data) {
 }
 
 static napi_value Connect(napi_env env, napi_callback_info info) {
-    size_t argc = 5;
-    napi_value args[5];
+    size_t argc = 7;
+    napi_value args[7];
     napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
 
     if (argc < 5) {
@@ -279,6 +297,27 @@ static napi_value Connect(napi_env env, napi_callback_info info) {
     d->password.resize(strLen);
     napi_get_value_string_utf8(env, args[4], &d->password[0], strLen + 1, &strLen);
 
+    // Extract optional timeoutSec (arg 5)
+    if (argc >= 6) {
+        napi_valuetype type;
+        napi_typeof(env, args[5], &type);
+        if (type == napi_number) {
+            int32_t val = 10;
+            napi_get_value_int32(env, args[5], &val);
+            d->timeoutSec = val;
+        }
+    }
+    // Extract optional keepaliveInterval (arg 6)
+    if (argc >= 7) {
+        napi_valuetype type;
+        napi_typeof(env, args[6], &type);
+        if (type == napi_number) {
+            int32_t val = 30;
+            napi_get_value_int32(env, args[6], &val);
+            d->keepaliveInterval = val;
+        }
+    }
+
     // Create Promise
     napi_value promise;
     napi_create_promise(env, &d->deferred, &promise);
@@ -294,8 +333,8 @@ static napi_value Connect(napi_env env, napi_callback_info info) {
 }
 
 static napi_value ConnectWithKey(napi_env env, napi_callback_info info) {
-    size_t argc = 6;
-    napi_value args[6];
+    size_t argc = 8;
+    napi_value args[8];
     napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
 
     if (argc < 5) {
@@ -339,6 +378,27 @@ static napi_value ConnectWithKey(napi_env env, napi_callback_info info) {
             napi_get_value_string_utf8(env, args[5], nullptr, 0, &strLen);
             d->passphrase.resize(strLen);
             napi_get_value_string_utf8(env, args[5], &d->passphrase[0], strLen + 1, &strLen);
+        }
+    }
+
+    // Extract optional timeoutSec
+    if (argc >= 7) {
+        napi_valuetype type;
+        napi_typeof(env, args[6], &type);
+        if (type == napi_number) {
+            int32_t val = 10;
+            napi_get_value_int32(env, args[6], &val);
+            d->timeoutSec = val;
+        }
+    }
+    // Extract optional keepaliveInterval
+    if (argc >= 8) {
+        napi_valuetype type;
+        napi_typeof(env, args[7], &type);
+        if (type == napi_number) {
+            int32_t val = 30;
+            napi_get_value_int32(env, args[7], &val);
+            d->keepaliveInterval = val;
         }
     }
 
@@ -1217,6 +1277,56 @@ static napi_value SftpStat(napi_env env, napi_callback_info info) {
     return promise;
 }
 
+// --- sftpChmod(handle, path, mode) -> Promise<void> ---
+static void SftpChmodExecute(napi_env env, void *data) {
+    auto *d = static_cast<SftpSimpleData *>(data);
+    SshContext *ctx = d->ctx;
+    if (!ctx->sftp) { d->errorMsg = "SFTP not initialized"; return; }
+    libssh2_session_set_blocking(ctx->session, 1);
+
+    LIBSSH2_SFTP_ATTRIBUTES attrs;
+    memset(&attrs, 0, sizeof(attrs));
+    attrs.flags = LIBSSH2_SFTP_ATTR_PERMISSIONS;
+    // Mode stored in path2 as string
+    attrs.permissions = (unsigned long)std::stoul(d->path2);
+
+    int rc = libssh2_sftp_setstat(ctx->sftp, d->path.c_str(), &attrs);
+    if (rc != 0) {
+        d->errorMsg = "SFTP chmod failed: " + GetSessionError(ctx->session);
+        return;
+    }
+    d->success = true;
+}
+
+static napi_value SftpChmod(napi_env env, napi_callback_info info) {
+    size_t argc = 3;
+    napi_value args[3];
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+    if (argc < 3) return ThrowError(env, "sftpChmod requires 3 arguments: handle, path, mode");
+
+    auto *d = new SftpSimpleData();
+    d->ctx = UnwrapContext(env, args[0]);
+    if (!d->ctx) { delete d; return ThrowError(env, "Invalid SSH handle"); }
+
+    size_t strLen = 0;
+    napi_get_value_string_utf8(env, args[1], nullptr, 0, &strLen);
+    d->path.resize(strLen);
+    napi_get_value_string_utf8(env, args[1], &d->path[0], strLen + 1, &strLen);
+
+    // Read mode as int, store as string in path2
+    int32_t mode = 0;
+    napi_get_value_int32(env, args[2], &mode);
+    d->path2 = std::to_string((unsigned long)mode);
+
+    napi_value promise;
+    napi_create_promise(env, &d->deferred, &promise);
+    napi_value workName;
+    napi_create_string_utf8(env, "sftp_chmod", NAPI_AUTO_LENGTH, &workName);
+    napi_create_async_work(env, nullptr, workName, SftpChmodExecute, SftpSimpleComplete, d, &d->work);
+    napi_queue_async_work(env, d->work);
+    return promise;
+}
+
 // --- Binary & Streaming SFTP Operations ---
 struct SftpBinaryData {
     SshContext *ctx;
@@ -1419,6 +1529,45 @@ static napi_value SftpCloseFile(napi_env env, napi_callback_info info) {
 }
 
 // ===================================================================
+// getHostKeyFingerprint(handle) -> string (sync)
+// Returns Base64-encoded SHA-256 fingerprint (matches ssh-keygen format)
+// ===================================================================
+static napi_value GetHostKeyFingerprint(napi_env env, napi_callback_info info) {
+    size_t argc = 1;
+    napi_value args[1];
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+    if (argc < 1) return ThrowError(env, "getHostKeyFingerprint requires 1 argument: handle");
+
+    SshContext *ctx = UnwrapContext(env, args[0]);
+    if (!ctx || !ctx->session) return ThrowError(env, "Invalid handle or not connected");
+
+    const char *hash = libssh2_hostkey_hash(ctx->session, LIBSSH2_HOSTKEY_HASH_SHA256);
+    if (!hash) return ThrowError(env, "Failed to get host key hash");
+
+    // Base64 encode 32 bytes (matches ssh-keygen -lf output)
+    static const char b64[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    const unsigned char *src = (const unsigned char *)hash;
+    char out[45]; // ceil(32/3)*4 + 1 = 44 + 1
+    int j = 0;
+    for (int i = 0; i < 32; i += 3) {
+        int remaining = 32 - i;
+        unsigned int n = ((unsigned int)src[i]) << 16;
+        if (remaining > 1) n |= ((unsigned int)src[i+1]) << 8;
+        if (remaining > 2) n |= (unsigned int)src[i+2];
+
+        out[j++] = b64[(n >> 18) & 0x3F];
+        out[j++] = b64[(n >> 12) & 0x3F];
+        out[j++] = (remaining > 1) ? b64[(n >> 6) & 0x3F] : '=';
+        out[j++] = (remaining > 2) ? b64[n & 0x3F] : '=';
+    }
+    out[j] = '\0';
+
+    napi_value result;
+    napi_create_string_utf8(env, out, j, &result);
+    return result;
+}
+
+// ===================================================================
 // disconnect(handle)
 // ===================================================================
 static napi_value Disconnect(napi_env env, napi_callback_info info) {
@@ -1477,11 +1626,14 @@ napi_value RegisterSshNapi(napi_env env, napi_value exports) {
         {"sftpRmdir",      nullptr, SftpRmdir,      nullptr, nullptr, nullptr, napi_default, nullptr},
         {"sftpRename",     nullptr, SftpRename,     nullptr, nullptr, nullptr, napi_default, nullptr},
         {"sftpStat",       nullptr, SftpStat,       nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"sftpChmod",      nullptr, SftpChmod,      nullptr, nullptr, nullptr, napi_default, nullptr},
         // SFTP Phase 2: Binary/Streaming
         {"sftpOpenFile",   nullptr, SftpOpenFile,   nullptr, nullptr, nullptr, napi_default, nullptr},
         {"sftpRead",       nullptr, SftpRead,       nullptr, nullptr, nullptr, napi_default, nullptr},
         {"sftpWrite",      nullptr, SftpWrite,      nullptr, nullptr, nullptr, napi_default, nullptr},
         {"sftpCloseFile",  nullptr, SftpCloseFile,  nullptr, nullptr, nullptr, napi_default, nullptr},
+        // Stage 5: Security & Config
+        {"getHostKeyFingerprint", nullptr, GetHostKeyFingerprint, nullptr, nullptr, nullptr, napi_default, nullptr},
     };
 
     napi_define_properties(env, exports, sizeof(desc) / sizeof(desc[0]), desc);

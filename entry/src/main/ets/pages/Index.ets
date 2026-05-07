@@ -196,7 +196,9 @@ struct Index {
                   this.password,
                 );
                 this.isConnected = true;
+                const fp = this.client.getHostKeyFingerprint();
                 this.log("[SUCCESS] connect OK - authenticated");
+                this.log(`[Fingerprint] SHA-256: ${fp}`);
               } catch (e) {
                 this.logError("connect: " + (e as Error).message);
               }
@@ -220,7 +222,9 @@ struct Index {
                   this.passphrase,
                 );
                 this.isConnected = true;
+                const fp = this.client.getHostKeyFingerprint();
                 this.log("[SUCCESS] connectWithKey OK - authenticated");
+                this.log(`[Fingerprint] SHA-256: ${fp}`);
               } catch (e) {
                 this.logError("connectWithKey: " + (e as Error).message);
               }
@@ -389,11 +393,14 @@ struct Index {
                 const startTime = Date.now();
                 const buffer = await this.client.sftpReadFileBytes("/bin/ls");
                 const elapsed = Date.now() - startTime;
-                
+
                 const size = buffer.byteLength;
                 const view = new Uint8Array(buffer);
-                const magic = size >= 4 ? `0x${view[0].toString(16)}${view[1].toString(16)}${view[2].toString(16)}${view[3].toString(16)}` : "unknown";
-                
+                const magic =
+                  size >= 4
+                    ? `0x${view[0].toString(16)}${view[1].toString(16)}${view[2].toString(16)}${view[3].toString(16)}`
+                    : "unknown";
+
                 this.log(`[SUCCESS] Read ${size} bytes in ${elapsed}ms.`);
                 this.log(`[SFTP] Magic bytes: ${magic}`);
               } catch (e) {
@@ -421,7 +428,9 @@ struct Index {
                   ? Color.Red
                   : line.includes("[SUCCESS]")
                     ? Color.Green
-                    : Color.Black,
+                    : line.includes("[SHELL]")
+                      ? Color.Gray
+                      : Color.Black,
               )
               .width("100%")
               .padding({ left: 8, right: 8, top: 1, bottom: 1 });

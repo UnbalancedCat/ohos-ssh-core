@@ -1,1 +1,1 @@
-export { SshClient, SshState, SftpFileInfo, SftpOpenFlags } from './src/main/ets/SshClient';
+export { SshClient, SshState, SftpFileInfo, SftpOpenFlags, SshError, SshErrorCode, SshConnectOptions } from './src/main/ets/SshClient';

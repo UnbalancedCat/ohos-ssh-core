@@ -26,6 +26,34 @@ export enum SftpOpenFlags {
   EXCL = 0x00000020
 }
 
+// ===== Stage 5: Structured Error Classification =====
+
+export enum SshErrorCode {
+  UNKNOWN = 'UNKNOWN',
+  NETWORK_ERROR = 'NETWORK_ERROR',
+  AUTH_FAILED = 'AUTH_FAILED',
+  HANDSHAKE_FAILED = 'HANDSHAKE_FAILED',
+  CHANNEL_ERROR = 'CHANNEL_ERROR',
+  SFTP_ERROR = 'SFTP_ERROR',
+  TIMEOUT = 'TIMEOUT',
+  DISPOSED = 'DISPOSED',
+}
+
+export class SshError extends Error {
+  code: SshErrorCode;
+  constructor(message: string, code: SshErrorCode) {
+    super(message);
+    this.code = code;
+  }
+}
+
+export interface SshConnectOptions {
+  /** TCP + handshake timeout in seconds (default: 10) */
+  timeoutSec?: number;
+  /** Keepalive interval in seconds (default: 30, set 0 to disable) */
+  keepaliveInterval?: number;
+}
+
 /**
  * High-level ArkTS Object-Oriented wrapper for the native SSH core library.
  * Emits:
@@ -42,20 +70,41 @@ export class SshClient extends EventEmitter {
     this.handle = ssh.createContext();
   }
 
+  private classifyError(msg: string): SshErrorCode {
+    const lower = msg.toLowerCase();
+    if (lower.includes('dns') || lower.includes('tcp connect') || lower.includes('socket'))
+      return SshErrorCode.NETWORK_ERROR;
+    if (lower.includes('authentication') || lower.includes('auth'))
+      return SshErrorCode.AUTH_FAILED;
+    if (lower.includes('handshake'))
+      return SshErrorCode.HANDSHAKE_FAILED;
+    if (lower.includes('channel') || lower.includes('shell') || lower.includes('pty'))
+      return SshErrorCode.CHANNEL_ERROR;
+    if (lower.includes('sftp'))
+      return SshErrorCode.SFTP_ERROR;
+    if (lower.includes('timeout') || lower.includes('timed out'))
+      return SshErrorCode.TIMEOUT;
+    return SshErrorCode.UNKNOWN;
+  }
+
   /**
    * Connect to the remote host with password authentication.
    */
-  async connect(host: string, port: number, user: string, pass: string): Promise<void> {
-    if (!this.handle) throw new Error('Client is disposed');
-    if (this.state !== SshState.DISCONNECTED) throw new Error('Client is already connected or connecting');
+  async connect(host: string, port: number, user: string, pass: string,
+                options?: SshConnectOptions): Promise<void> {
+    if (!this.handle) throw new SshError('Client is disposed', SshErrorCode.DISPOSED);
+    if (this.state !== SshState.DISCONNECTED) throw new SshError('Client is already connected or connecting', SshErrorCode.UNKNOWN);
 
     this.state = SshState.CONNECTING;
     try {
-      await ssh.connect(this.handle, host, port, user, pass);
+      const timeout = options?.timeoutSec ?? 10;
+      const keepalive = options?.keepaliveInterval ?? 30;
+      await ssh.connect(this.handle, host, port, user, pass, timeout, keepalive);
       this.state = SshState.CONNECTED;
     } catch (err) {
       this.state = SshState.ERROR;
-      const error = new Error((err as Error).message ?? 'SSH connect failed');
+      const msg = (err as Error).message ?? 'SSH connect failed';
+      const error = new SshError(msg, this.classifyError(msg));
       this.emit('error', error);
       throw error;
     }
@@ -64,20 +113,35 @@ export class SshClient extends EventEmitter {
   /**
    * Connect to the remote host with public key authentication.
    */
-  async connectWithKey(host: string, port: number, user: string, privateKey: string, passphrase?: string): Promise<void> {
-    if (!this.handle) throw new Error('Client is disposed');
-    if (this.state !== SshState.DISCONNECTED) throw new Error('Client is already connected or connecting');
+  async connectWithKey(host: string, port: number, user: string, privateKey: string,
+                       passphrase?: string, options?: SshConnectOptions): Promise<void> {
+    if (!this.handle) throw new SshError('Client is disposed', SshErrorCode.DISPOSED);
+    if (this.state !== SshState.DISCONNECTED) throw new SshError('Client is already connected or connecting', SshErrorCode.UNKNOWN);
 
     this.state = SshState.CONNECTING;
     try {
-      await ssh.connectWithKey(this.handle, host, port, user, privateKey, passphrase);
+      const timeout = options?.timeoutSec ?? 10;
+      const keepalive = options?.keepaliveInterval ?? 30;
+      await ssh.connectWithKey(this.handle, host, port, user, privateKey, passphrase, timeout, keepalive);
       this.state = SshState.CONNECTED;
     } catch (err) {
       this.state = SshState.ERROR;
-      const error = new Error((err as Error).message ?? 'SSH key connect failed');
+      const msg = (err as Error).message ?? 'SSH key connect failed';
+      const error = new SshError(msg, this.classifyError(msg));
       this.emit('error', error);
       throw error;
     }
+  }
+
+  /**
+   * Get the SHA-256 fingerprint of the remote server's host key.
+   * Must be called after a successful connect/connectWithKey.
+   * Returns a 64-character lowercase hex string.
+   */
+  getHostKeyFingerprint(): string {
+    if (!this.handle) throw new SshError('Client is disposed', SshErrorCode.DISPOSED);
+    if (this.state !== SshState.CONNECTED) throw new SshError('Client is not connected', SshErrorCode.UNKNOWN);
+    return ssh.getHostKeyFingerprint(this.handle);
   }
 
   /**
@@ -85,13 +149,14 @@ export class SshClient extends EventEmitter {
    * This uses a separate non-interactive channel.
    */
   async execCommand(command: string): Promise<string> {
-    if (!this.handle) throw new Error('Client is disposed');
-    if (this.state !== SshState.CONNECTED) throw new Error('Client is not connected');
+    if (!this.handle) throw new SshError('Client is disposed', SshErrorCode.DISPOSED);
+    if (this.state !== SshState.CONNECTED) throw new SshError('Client is not connected', SshErrorCode.UNKNOWN);
 
     try {
       return await ssh.execCommand(this.handle, command);
     } catch (err) {
-      const error = new Error((err as Error).message ?? 'Exec failed');
+      const msg = (err as Error).message ?? 'Exec failed';
+      const error = new SshError(msg, this.classifyError(msg));
       this.emit('error', error);
       throw error;
     }
@@ -102,8 +167,8 @@ export class SshClient extends EventEmitter {
    * Uses a PTY channel. Data from the server will be emitted via 'data' event.
    */
   async startShell(cols: number = 80, rows: number = 24): Promise<void> {
-    if (!this.handle) throw new Error('Client is disposed');
-    if (this.state !== SshState.CONNECTED) throw new Error('Client is not connected');
+    if (!this.handle) throw new SshError('Client is disposed', SshErrorCode.DISPOSED);
+    if (this.state !== SshState.CONNECTED) throw new SshError('Client is not connected', SshErrorCode.UNKNOWN);
 
     const onData = (data: string) => {
       this.emit('data', data);
@@ -112,7 +177,8 @@ export class SshClient extends EventEmitter {
     try {
       await ssh.startShell(this.handle, onData, cols, rows);
     } catch (err) {
-      const error = new Error((err as Error).message ?? 'Shell start failed');
+      const msg = (err as Error).message ?? 'Shell start failed';
+      const error = new SshError(msg, this.classifyError(msg));
       this.emit('error', error);
       throw error;
     }
@@ -122,13 +188,14 @@ export class SshClient extends EventEmitter {
    * Write data (like keystrokes) to the interactive shell.
    */
   writeToShell(data: string): void {
-    if (!this.handle) throw new Error('Client is disposed');
-    if (this.state !== SshState.CONNECTED) throw new Error('Client is not connected');
+    if (!this.handle) throw new SshError('Client is disposed', SshErrorCode.DISPOSED);
+    if (this.state !== SshState.CONNECTED) throw new SshError('Client is not connected', SshErrorCode.UNKNOWN);
 
     try {
       ssh.writeToShell(this.handle, data);
     } catch (err) {
-      this.emit('error', new Error((err as Error).message ?? 'Write failed'));
+      const msg = (err as Error).message ?? 'Write failed';
+      this.emit('error', new SshError(msg, this.classifyError(msg)));
     }
   }
 
@@ -142,7 +209,8 @@ export class SshClient extends EventEmitter {
     try {
       ssh.resizePty(this.handle, cols, rows);
     } catch (err) {
-      this.emit('error', new Error((err as Error).message ?? 'Resize failed'));
+      const msg = (err as Error).message ?? 'Resize failed';
+      this.emit('error', new SshError(msg, this.classifyError(msg)));
     }
   }
 
@@ -152,13 +220,14 @@ export class SshClient extends EventEmitter {
    * Initialize the SFTP subsystem. Must be called after connect.
    */
   async sftpInit(): Promise<void> {
-    if (!this.handle) throw new Error('Client is disposed');
-    if (this.state !== SshState.CONNECTED) throw new Error('Client is not connected');
+    if (!this.handle) throw new SshError('Client is disposed', SshErrorCode.DISPOSED);
+    if (this.state !== SshState.CONNECTED) throw new SshError('Client is not connected', SshErrorCode.UNKNOWN);
 
     try {
       await ssh.sftpInit(this.handle);
     } catch (err) {
-      const error = new Error((err as Error).message ?? 'SFTP init failed');
+      const msg = (err as Error).message ?? 'SFTP init failed';
+      const error = new SshError(msg, this.classifyError(msg));
       this.emit('error', error);
       throw error;
     }
@@ -168,11 +237,12 @@ export class SshClient extends EventEmitter {
    * Shutdown the SFTP subsystem.
    */
   async sftpShutdown(): Promise<void> {
-    if (!this.handle) throw new Error('Client is disposed');
+    if (!this.handle) throw new SshError('Client is disposed', SshErrorCode.DISPOSED);
     try {
       await ssh.sftpShutdown(this.handle);
     } catch (err) {
-      const error = new Error((err as Error).message ?? 'SFTP shutdown failed');
+      const msg = (err as Error).message ?? 'SFTP shutdown failed';
+      const error = new SshError(msg, this.classifyError(msg));
       this.emit('error', error);
       throw error;
     }
@@ -182,12 +252,13 @@ export class SshClient extends EventEmitter {
    * List directory contents.
    */
   async sftpListDir(path: string): Promise<SftpFileInfo[]> {
-    if (!this.handle) throw new Error('Client is disposed');
+    if (!this.handle) throw new SshError('Client is disposed', SshErrorCode.DISPOSED);
     try {
       const json = await ssh.sftpListDir(this.handle, path);
       return JSON.parse(json) as SftpFileInfo[];
     } catch (err) {
-      const error = new Error((err as Error).message ?? 'SFTP listDir failed');
+      const msg = (err as Error).message ?? 'SFTP listDir failed';
+      const error = new SshError(msg, this.classifyError(msg));
       this.emit('error', error);
       throw error;
     }
@@ -197,11 +268,12 @@ export class SshClient extends EventEmitter {
    * Read a remote text file.
    */
   async sftpReadFile(remotePath: string): Promise<string> {
-    if (!this.handle) throw new Error('Client is disposed');
+    if (!this.handle) throw new SshError('Client is disposed', SshErrorCode.DISPOSED);
     try {
       return await ssh.sftpReadFile(this.handle, remotePath);
     } catch (err) {
-      const error = new Error((err as Error).message ?? 'SFTP readFile failed');
+      const msg = (err as Error).message ?? 'SFTP readFile failed';
+      const error = new SshError(msg, this.classifyError(msg));
       this.emit('error', error);
       throw error;
     }
@@ -211,11 +283,12 @@ export class SshClient extends EventEmitter {
    * Write text data to a remote file (creates or overwrites).
    */
   async sftpWriteFile(remotePath: string, data: string): Promise<void> {
-    if (!this.handle) throw new Error('Client is disposed');
+    if (!this.handle) throw new SshError('Client is disposed', SshErrorCode.DISPOSED);
     try {
       await ssh.sftpWriteFile(this.handle, remotePath, data);
     } catch (err) {
-      const error = new Error((err as Error).message ?? 'SFTP writeFile failed');
+      const msg = (err as Error).message ?? 'SFTP writeFile failed';
+      const error = new SshError(msg, this.classifyError(msg));
       this.emit('error', error);
       throw error;
     }
@@ -225,11 +298,12 @@ export class SshClient extends EventEmitter {
    * Delete a remote file.
    */
   async sftpDelete(path: string): Promise<void> {
-    if (!this.handle) throw new Error('Client is disposed');
+    if (!this.handle) throw new SshError('Client is disposed', SshErrorCode.DISPOSED);
     try {
       await ssh.sftpDelete(this.handle, path);
     } catch (err) {
-      const error = new Error((err as Error).message ?? 'SFTP delete failed');
+      const msg = (err as Error).message ?? 'SFTP delete failed';
+      const error = new SshError(msg, this.classifyError(msg));
       this.emit('error', error);
       throw error;
     }
@@ -239,11 +313,12 @@ export class SshClient extends EventEmitter {
    * Create a remote directory (mode 0755).
    */
   async sftpMkdir(path: string): Promise<void> {
-    if (!this.handle) throw new Error('Client is disposed');
+    if (!this.handle) throw new SshError('Client is disposed', SshErrorCode.DISPOSED);
     try {
       await ssh.sftpMkdir(this.handle, path);
     } catch (err) {
-      const error = new Error((err as Error).message ?? 'SFTP mkdir failed');
+      const msg = (err as Error).message ?? 'SFTP mkdir failed';
+      const error = new SshError(msg, this.classifyError(msg));
       this.emit('error', error);
       throw error;
     }
@@ -253,11 +328,12 @@ export class SshClient extends EventEmitter {
    * Remove a remote directory (must be empty).
    */
   async sftpRmdir(path: string): Promise<void> {
-    if (!this.handle) throw new Error('Client is disposed');
+    if (!this.handle) throw new SshError('Client is disposed', SshErrorCode.DISPOSED);
     try {
       await ssh.sftpRmdir(this.handle, path);
     } catch (err) {
-      const error = new Error((err as Error).message ?? 'SFTP rmdir failed');
+      const msg = (err as Error).message ?? 'SFTP rmdir failed';
+      const error = new SshError(msg, this.classifyError(msg));
       this.emit('error', error);
       throw error;
     }
@@ -267,11 +343,12 @@ export class SshClient extends EventEmitter {
    * Rename or move a remote file/directory.
    */
   async sftpRename(src: string, dst: string): Promise<void> {
-    if (!this.handle) throw new Error('Client is disposed');
+    if (!this.handle) throw new SshError('Client is disposed', SshErrorCode.DISPOSED);
     try {
       await ssh.sftpRename(this.handle, src, dst);
     } catch (err) {
-      const error = new Error((err as Error).message ?? 'SFTP rename failed');
+      const msg = (err as Error).message ?? 'SFTP rename failed';
+      const error = new SshError(msg, this.classifyError(msg));
       this.emit('error', error);
       throw error;
     }
@@ -281,12 +358,30 @@ export class SshClient extends EventEmitter {
    * Get file/directory attributes.
    */
   async sftpStat(path: string): Promise<SftpFileInfo> {
-    if (!this.handle) throw new Error('Client is disposed');
+    if (!this.handle) throw new SshError('Client is disposed', SshErrorCode.DISPOSED);
     try {
       const json = await ssh.sftpStat(this.handle, path);
       return JSON.parse(json) as SftpFileInfo;
     } catch (err) {
-      const error = new Error((err as Error).message ?? 'SFTP stat failed');
+      const msg = (err as Error).message ?? 'SFTP stat failed';
+      const error = new SshError(msg, this.classifyError(msg));
+      this.emit('error', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Change permissions of a remote file or directory.
+   * @param path Remote path
+   * @param mode Permission bits (e.g. 0o755, 0o644)
+   */
+  async sftpChmod(path: string, mode: number): Promise<void> {
+    if (!this.handle) throw new SshError('Client is disposed', SshErrorCode.DISPOSED);
+    try {
+      await ssh.sftpChmod(this.handle, path, mode);
+    } catch (err) {
+      const msg = (err as Error).message ?? 'SFTP chmod failed';
+      const error = new SshError(msg, this.classifyError(msg));
       this.emit('error', error);
       throw error;
     }
@@ -298,11 +393,12 @@ export class SshClient extends EventEmitter {
    * Open a remote file and return a file descriptor (fd).
    */
   async sftpOpenFile(path: string, flags: number, mode: number): Promise<number> {
-    if (!this.handle) throw new Error('Client is disposed');
+    if (!this.handle) throw new SshError('Client is disposed', SshErrorCode.DISPOSED);
     try {
       return await ssh.sftpOpenFile(this.handle, path, flags, mode);
     } catch (err) {
-      throw new Error((err as Error).message ?? 'SFTP openFile failed');
+      const msg = (err as Error).message ?? 'SFTP openFile failed';
+      throw new SshError(msg, this.classifyError(msg));
     }
   }
 
@@ -311,11 +407,12 @@ export class SshClient extends EventEmitter {
    * Returns an ArrayBuffer. An empty ArrayBuffer (byteLength === 0) indicates EOF.
    */
   async sftpRead(fd: number, size: number = 32768): Promise<ArrayBuffer> {
-    if (!this.handle) throw new Error('Client is disposed');
+    if (!this.handle) throw new SshError('Client is disposed', SshErrorCode.DISPOSED);
     try {
       return await ssh.sftpRead(this.handle, fd, size);
     } catch (err) {
-      throw new Error((err as Error).message ?? 'SFTP read failed');
+      const msg = (err as Error).message ?? 'SFTP read failed';
+      throw new SshError(msg, this.classifyError(msg));
     }
   }
 
@@ -323,11 +420,12 @@ export class SshClient extends EventEmitter {
    * Write binary data to an open file descriptor.
    */
   async sftpWrite(fd: number, data: ArrayBuffer): Promise<void> {
-    if (!this.handle) throw new Error('Client is disposed');
+    if (!this.handle) throw new SshError('Client is disposed', SshErrorCode.DISPOSED);
     try {
       await ssh.sftpWrite(this.handle, fd, data);
     } catch (err) {
-      throw new Error((err as Error).message ?? 'SFTP write failed');
+      const msg = (err as Error).message ?? 'SFTP write failed';
+      throw new SshError(msg, this.classifyError(msg));
     }
   }
 
@@ -335,11 +433,12 @@ export class SshClient extends EventEmitter {
    * Close an open file descriptor.
    */
   async sftpCloseFile(fd: number): Promise<void> {
-    if (!this.handle) throw new Error('Client is disposed');
+    if (!this.handle) throw new SshError('Client is disposed', SshErrorCode.DISPOSED);
     try {
       await ssh.sftpCloseFile(this.handle, fd);
     } catch (err) {
-      throw new Error((err as Error).message ?? 'SFTP closeFile failed');
+      const msg = (err as Error).message ?? 'SFTP closeFile failed';
+      throw new SshError(msg, this.classifyError(msg));
     }
   }
 

@@ -30,11 +30,16 @@ To provide optimal compatibility and size control on HarmonyOS, this project int
 1. **Comprehensive Authentication Support**
    - Native support for password login.
    - Powered by OpenSSL, it automatically parses standard OpenSSH private keys (e.g., `-----BEGIN OPENSSH PRIVATE KEY-----`) and supports passphrase-protected keys. Developers do not need to manually extract public keys.
-2. **Interactive Shell Communication**
+2. **Security & Connection Management**
+   - **Host Key Fingerprint Verification**: After a successful connection, call `getHostKeyFingerprint()` to retrieve the server's SHA-256 public key fingerprint (Base64 encoded, matching `ssh-keygen -lf` output) for implementing TOFU (Trust On First Use) strategies.
+   - **Connection Timeout**: Configure TCP + handshake timeout via `SshConnectOptions.timeoutSec` (default: 10 seconds) to prevent hanging on unreachable hosts.
+   - **Keepalive**: Configure `libssh2_keepalive_config` via `SshConnectOptions.keepaliveInterval` (default: 30 seconds) to prevent NAT gateways from dropping idle connections.
+   - **Structured Error Classification**: All exceptions throw `SshError` instances with an `SshErrorCode` enum (e.g., `NETWORK_ERROR`, `AUTH_FAILED`, `TIMEOUT`), enabling callers to handle different error types precisely.
+3. **Interactive Shell Communication**
    - Maintains an independent C++ socket reading thread internally. When terminal data arrives, it non-blockingly and safely pushes data to ArkTS using N-API's `napi_threadsafe_function`.
    - Exposes a PTY resizing interface (`resizePty`), facilitating seamless frontend integration with terminal UI components like `xterm.js`.
-3. **Hierarchical SFTP File Management**
-   - **Standard File Operations**: Provides POSIX-semantic interfaces for directory reading, attribute querying (`stat`), creation, deletion, and renaming.
+4. **Hierarchical SFTP File Management**
+   - **Standard File Operations**: Provides POSIX-semantic interfaces for directory reading, attribute querying (`stat`), permission changes (`chmod`), creation, deletion, and renaming.
    - **Quick Read/Write**: Offers interfaces to directly read remote files into memory as `string` or `ArrayBuffer`, ideal for small files like configurations.
    - **Streaming Large File Transfer**: Exposes low-level `open`, `read`, `write`, `close` interfaces (returning file descriptors). The ArkTS side can control chunk sizes via loop transfers, effectively managing memory peaks and easily implementing upload/download progress bars.
 
