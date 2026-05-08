@@ -18,7 +18,15 @@
    and via platform-specific directories for os400 and vms */
 #if defined(HAVE_CONFIG_H) || defined(__OS400__) || defined(__VMS)
 
-#include "libssh2_config.h"
+#if defined(__has_include)
+#  if __has_include("libssh2_config.h")
+#    include "libssh2_config.h"
+#  else
+#    include "../../../ohos_port/libssh2_config.h"
+#  endif
+#else
+#  include "libssh2_config.h"
+#endif
 
 /* Hand-crafted configuration for platforms which lack config tool.
    Keep this synced with root CMakeLists.txt */

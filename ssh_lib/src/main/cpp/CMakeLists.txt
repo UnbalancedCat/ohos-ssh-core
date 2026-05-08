@@ -97,6 +97,7 @@ target_compile_definitions(ssh2 PRIVATE
 )
 
 target_include_directories(ssh2 PUBLIC
+    ${CPP_ROOT}/ohos_port
     ${LIBSSH2_DIR}/include
     ${LIBSSH2_DIR}/src
     ${CRYPTO_INCLUDE_DIRS}
@@ -120,6 +121,7 @@ add_library(ssh_core SHARED
 
 target_include_directories(ssh_core PRIVATE
     ${CPP_ROOT}
+    ${CPP_ROOT}/ohos_port
     ${LIBSSH2_DIR}/include
     ${CRYPTO_INCLUDE_DIRS}
 )

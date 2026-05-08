@@ -5,13 +5,13 @@
         "name": "default",
         "type": "HarmonyOS",
         "material": {
-          "certpath": "C:\\Users\\Unbal\\.ohos\\config\\default_ssh_core_v3uncoIriUHwrZxXmmiesrEbbHVyZgSzwXH4BCukrHk=.cer",
+          "certpath": "C:\\Users\\Unbal\\.ohos\\config\\default_ohos-ssh-core_TTUbNcj31i7lq4SfovG76E6ZX8oq6uba1lEurHmn8Q8=.cer",
           "keyAlias": "debugKey",
-          "keyPassword": "0000001BB2575165AECEFC85970B97A26F06B4F49011840CD8CC63C1C33640FA4525ECFC86091186B90B28",
-          "profile": "C:\\Users\\Unbal\\.ohos\\config\\default_ssh_core_v3uncoIriUHwrZxXmmiesrEbbHVyZgSzwXH4BCukrHk=.p7b",
+          "keyPassword": "0000001A0EA17A815D9788D2F141E84C35B55F87C4B32599838B4937855DD4F81EA8B6F03DF488854580",
+          "profile": "C:\\Users\\Unbal\\.ohos\\config\\default_ohos-ssh-core_TTUbNcj31i7lq4SfovG76E6ZX8oq6uba1lEurHmn8Q8=.p7b",
           "signAlg": "SHA256withECDSA",
-          "storeFile": "C:\\Users\\Unbal\\.ohos\\config\\default_ssh_core_v3uncoIriUHwrZxXmmiesrEbbHVyZgSzwXH4BCukrHk=.p12",
-          "storePassword": "0000001BC36B404983272AF9723C951833291D84970684F7C2044D5F0829DAE31F3A767A93B4810A1C0627"
+          "storeFile": "C:\\Users\\Unbal\\.ohos\\config\\default_ohos-ssh-core_TTUbNcj31i7lq4SfovG76E6ZX8oq6uba1lEurHmn8Q8=.p12",
+          "storePassword": "0000001A9D843EDF408055D5B0BA29DC7F73C7889B6ADDAFC6761FA0C880287DEE8161267C57CA26B3E5"
         }
       }
     ],
